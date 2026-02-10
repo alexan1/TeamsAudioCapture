@@ -1,4 +1,4 @@
-﻿using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using System;
 using System.IO;
@@ -7,19 +7,18 @@ class Program
 {
     static void Main(string[] args)
     {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.WriteLine("🎙️  Teams Audio Capture to WAV File\n");
         
         var capturer = new AudioCapturer();
         
         Console.WriteLine("Press 'S' to start recording...");
-        while (Console.ReadKey(true).KeyChar != 'S' && 
-               Console.ReadKey(true).KeyChar != 's') { }
+        while (Console.ReadKey(true).Key != ConsoleKey.S) { }
         
         capturer.Start();
         
         Console.WriteLine("Recording... Press 'Q' to stop.\n");
-        while (Console.ReadKey(true).KeyChar != 'Q' && 
-               Console.ReadKey(true).KeyChar != 'q') { }
+        while (Console.ReadKey(true).Key != ConsoleKey.Q) { }
         
         capturer.Stop();
         Console.WriteLine("✅ Recording saved!");
