@@ -59,8 +59,7 @@ public class AudioCapturer
             
             _capture.RecordingStopped += (s, e) =>
             {
-                _writer?.Dispose();
-                _capture?.Dispose();
+                // Cleanup handled in Stop() method
             };
             
             _capture.StartRecording();
@@ -75,6 +74,10 @@ public class AudioCapturer
     public void Stop()
     {
         _capture?.StopRecording();
+
+        _writer?.Dispose();
+        _capture?.Dispose();
+
         Console.WriteLine($"\n✅ Saved to: {_filePath}");
         Console.WriteLine($"📊 File size: {new FileInfo(_filePath).Length / 1024 / 1024}MB");
     }
