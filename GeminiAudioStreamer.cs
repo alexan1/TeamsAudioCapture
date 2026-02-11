@@ -1,5 +1,5 @@
 using System;
-using System.Net.WebSockets;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -8,43 +8,31 @@ using System.Threading.Tasks;
 public class GeminiAudioStreamer : IDisposable
 {
     private readonly string _apiKey;
-    private ClientWebSocket? _webSocket;
+    private readonly HttpClient _httpClient;
     private CancellationTokenSource? _cts;
     private bool _isConnected;
+    private readonly StringBuilder _audioBuffer;
+    private const int BufferSize = 1024 * 100; // 100KB buffer before sending
 
     public GeminiAudioStreamer(string apiKey)
     {
         ArgumentNullException.ThrowIfNull(apiKey);
         _apiKey = apiKey;
+        _httpClient = new HttpClient();
+        _audioBuffer = new StringBuilder();
     }
 
-    public async Task ConnectAsync()
+    public Task ConnectAsync()
     {
-        try
-        {
-            _webSocket = new ClientWebSocket();
-            _cts = new CancellationTokenSource();
-
-            var uri = new Uri($"wss://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:streamGenerateContent?key={_apiKey}");
-            
-            await _webSocket.ConnectAsync(uri, _cts.Token);
-            _isConnected = true;
-
-            Console.WriteLine("🌐 Connected to Gemini Voice API");
-
-            // Start receiving responses
-            _ = Task.Run(() => ReceiveResponsesAsync(_cts.Token));
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Failed to connect to Gemini: {ex.Message}");
-            throw;
-        }
+        _isConnected = true;
+        _cts = new CancellationTokenSource();
+        Console.WriteLine("🌐 Connected to Gemini API");
+        return Task.CompletedTask;
     }
 
     public async Task StreamAudioAsync(byte[] audioData, int offset, int count)
     {
-        if (!_isConnected || _webSocket == null || _cts == null)
+        if (!_isConnected || _cts == null)
         {
             Console.WriteLine("⚠️ Not connected to Gemini");
             return;
@@ -52,101 +40,119 @@ public class GeminiAudioStreamer : IDisposable
 
         try
         {
-            // Convert audio to base64
+            // Buffer audio chunks
             var audioChunk = new byte[count];
             Array.Copy(audioData, offset, audioChunk, 0, count);
             var base64Audio = Convert.ToBase64String(audioChunk);
 
-            // Create JSON payload for Gemini
+            _audioBuffer.Append(base64Audio);
+
+            // Send to Gemini when buffer reaches threshold
+            if (_audioBuffer.Length >= BufferSize)
+            {
+                await SendToGeminiAsync(_cts.Token);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error buffering audio: {ex.Message}");
+        }
+    }
+
+    private async Task SendToGeminiAsync(CancellationToken cancellationToken)
+    {
+        if (_audioBuffer.Length == 0) return;
+
+        try
+        {
             var payload = new
             {
                 contents = new[]
                 {
                     new
                     {
-                        parts = new[]
+                        parts = new object[]
                         {
-                            new { inline_data = new { mime_type = "audio/wav", data = base64Audio } }
+                            new { text = "Transcribe this audio and provide a summary." },
+                            new { 
+                                inline_data = new { 
+                                    mime_type = "audio/wav", 
+                                    data = _audioBuffer.ToString() 
+                                } 
+                            }
                         }
                     }
                 }
             };
 
             var json = JsonSerializer.Serialize(payload);
-            var bytes = Encoding.UTF8.GetBytes(json);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            await _webSocket.SendAsync(
-                new ArraySegment<byte>(bytes),
-                WebSocketMessageType.Text,
-                endOfMessage: true,
-                _cts.Token
-            );
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error streaming to Gemini: {ex.Message}");
-        }
-    }
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={_apiKey}";
 
-    private async Task ReceiveResponsesAsync(CancellationToken cancellationToken)
-    {
-        if (_webSocket == null) return;
+            var response = await _httpClient.PostAsync(url, content, cancellationToken);
 
-        var buffer = new byte[4096];
-
-        try
-        {
-            while (_isConnected && !cancellationToken.IsCancellationRequested)
+            if (response.IsSuccessStatusCode)
             {
-                var result = await _webSocket.ReceiveAsync(
-                    new ArraySegment<byte>(buffer),
-                    cancellationToken
-                );
+                var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+                Console.WriteLine($"🤖 Gemini: {ParseResponse(responseText)}");
 
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    await _webSocket.CloseAsync(
-                        WebSocketCloseStatus.NormalClosure,
-                        "Closing",
-                        cancellationToken
-                    );
-                    _isConnected = false;
-                    break;
-                }
-
-                var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                Console.WriteLine($"🤖 Gemini response: {message}");
+                // Clear buffer after successful send
+                _audioBuffer.Clear();
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync(cancellationToken);
+                Console.WriteLine($"⚠️ Gemini API error ({response.StatusCode}): {error}");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error receiving from Gemini: {ex.Message}");
+            Console.WriteLine($"❌ Error sending to Gemini: {ex.Message}");
         }
+    }
+
+    private string ParseResponse(string jsonResponse)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonResponse);
+            if (doc.RootElement.TryGetProperty("candidates", out var candidates) &&
+                candidates.GetArrayLength() > 0)
+            {
+                var firstCandidate = candidates[0];
+                if (firstCandidate.TryGetProperty("content", out var content) &&
+                    content.TryGetProperty("parts", out var parts) &&
+                    parts.GetArrayLength() > 0)
+                {
+                    var firstPart = parts[0];
+                    if (firstPart.TryGetProperty("text", out var text))
+                    {
+                        return text.GetString() ?? "No response";
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️ Error parsing response: {ex.Message}");
+        }
+
+        return jsonResponse;
     }
 
     public async Task DisconnectAsync()
     {
         _isConnected = false;
 
-        if (_webSocket != null && _webSocket.State == WebSocketState.Open)
+        // Send any remaining buffered audio
+        if (_audioBuffer.Length > 0 && _cts != null)
         {
-            try
-            {
-                await _webSocket.CloseAsync(
-                    WebSocketCloseStatus.NormalClosure,
-                    "Client closing",
-                    CancellationToken.None
-                );
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"⚠️ Error closing WebSocket: {ex.Message}");
-            }
+            await SendToGeminiAsync(_cts.Token);
         }
 
         _cts?.Cancel();
         _cts?.Dispose();
-        _webSocket?.Dispose();
 
         Console.WriteLine("🔌 Disconnected from Gemini");
     }
@@ -154,5 +160,6 @@ public class GeminiAudioStreamer : IDisposable
     public void Dispose()
     {
         DisconnectAsync().GetAwaiter().GetResult();
+        _httpClient?.Dispose();
     }
 }
