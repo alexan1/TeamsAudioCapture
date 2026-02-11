@@ -33,3 +33,6 @@ x86/
 *.swp
 *~
 .DS_Store
+
+## Local settings
+appsettings.Local.json

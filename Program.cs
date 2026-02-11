@@ -3,6 +3,7 @@ using NAudio.Wave;
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 
 class Program
 {
@@ -10,35 +11,46 @@ class Program
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.WriteLine("🎙️  Teams Audio Capture to Gemini Voice API\n");
-        
-        Console.Write("Enter your Gemini API key (or press Enter to skip streaming): ");
-        var apiKey = Console.ReadLine();
-        
+
+        // Load configuration
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json", optional: true)
+            .AddJsonFile("appsettings.Local.json", optional: true)
+            .Build();
+
+        var apiKey = configuration["Gemini:ApiKey"];
+
         GeminiAudioStreamer? geminiStreamer = null;
-        
-        if (!string.IsNullOrWhiteSpace(apiKey))
+
+        if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
         {
             geminiStreamer = new GeminiAudioStreamer(apiKey);
             await geminiStreamer.ConnectAsync();
         }
-        
+        else
+        {
+            Console.WriteLine("⚠️ No API key found. Add your key to appsettings.Local.json");
+            Console.WriteLine("📝 Recording to WAV only...\n");
+        }
+
         var capturer = new AudioCapturer(geminiStreamer);
-        
-        Console.WriteLine("\nPress 'S' to start recording...");
+
+        Console.WriteLine("Press 'S' to start recording...");
         while (Console.ReadKey(true).Key != ConsoleKey.S) { }
-        
+
         capturer.Start();
-        
+
         Console.WriteLine("Recording... Press 'Q' to stop.\n");
         while (Console.ReadKey(true).Key != ConsoleKey.Q) { }
-        
+
         await capturer.StopAsync();
-        
+
         if (geminiStreamer != null)
         {
             await geminiStreamer.DisconnectAsync();
         }
-        
+
         Console.WriteLine("✅ Recording saved!");
     }
 }
