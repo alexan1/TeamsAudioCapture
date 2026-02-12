@@ -15,7 +15,7 @@ public class GeminiAudioStreamer : IDisposable
     private bool _isConnected;
     private readonly MemoryStream _audioBuffer;
     private readonly WaveFormat? _waveFormat;
-    private const int BufferSizeBytes = 1024 * 1024; // 1MB buffer before sending
+    private const int BufferSizeBytes = 1024 * 1024 * 5; // 5MB buffer (fewer API calls) before sending
 
     public GeminiAudioStreamer(string apiKey)
     {
@@ -196,6 +196,7 @@ public class GeminiAudioStreamer : IDisposable
         _httpClient?.Dispose();
     }
 }
+
 
 
 
