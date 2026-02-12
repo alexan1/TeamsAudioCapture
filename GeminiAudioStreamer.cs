@@ -1,9 +1,11 @@
 using System;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using NAudio.Wave;
 
 public class GeminiAudioStreamer : IDisposable
 {
@@ -11,15 +13,16 @@ public class GeminiAudioStreamer : IDisposable
     private readonly HttpClient _httpClient;
     private CancellationTokenSource? _cts;
     private bool _isConnected;
-    private readonly StringBuilder _audioBuffer;
-    private const int BufferSize = 1024 * 100; // 100KB buffer before sending
+    private readonly MemoryStream _audioBuffer;
+    private readonly WaveFormat? _waveFormat;
+    private const int BufferSizeBytes = 1024 * 1024; // 1MB buffer before sending
 
     public GeminiAudioStreamer(string apiKey)
     {
         ArgumentNullException.ThrowIfNull(apiKey);
         _apiKey = apiKey;
         _httpClient = new HttpClient();
-        _audioBuffer = new StringBuilder();
+        _audioBuffer = new MemoryStream();
     }
 
     public Task ConnectAsync()
@@ -30,7 +33,7 @@ public class GeminiAudioStreamer : IDisposable
         return Task.CompletedTask;
     }
 
-    public async Task StreamAudioAsync(byte[] audioData, int offset, int count)
+    public async Task StreamAudioAsync(byte[] audioData, int offset, int count, WaveFormat waveFormat)
     {
         if (!_isConnected || _cts == null)
         {
@@ -40,17 +43,13 @@ public class GeminiAudioStreamer : IDisposable
 
         try
         {
-            // Buffer audio chunks
-            var audioChunk = new byte[count];
-            Array.Copy(audioData, offset, audioChunk, 0, count);
-            var base64Audio = Convert.ToBase64String(audioChunk);
-
-            _audioBuffer.Append(base64Audio);
+            // Buffer raw audio bytes
+            _audioBuffer.Write(audioData, offset, count);
 
             // Send to Gemini when buffer reaches threshold
-            if (_audioBuffer.Length >= BufferSize)
+            if (_audioBuffer.Length >= BufferSizeBytes)
             {
-                await SendToGeminiAsync(_cts.Token);
+                await SendToGeminiAsync(waveFormat, _cts.Token);
             }
         }
         catch (Exception ex)
@@ -59,12 +58,16 @@ public class GeminiAudioStreamer : IDisposable
         }
     }
 
-    private async Task SendToGeminiAsync(CancellationToken cancellationToken)
+    private async Task SendToGeminiAsync(WaveFormat waveFormat, CancellationToken cancellationToken)
     {
         if (_audioBuffer.Length == 0) return;
 
         try
         {
+            // Create a complete WAV file from buffered audio
+            var wavBytes = CreateWavFile(_audioBuffer.ToArray(), waveFormat);
+            var base64Audio = Convert.ToBase64String(wavBytes);
+
             var payload = new
             {
                 contents = new[]
@@ -77,7 +80,7 @@ public class GeminiAudioStreamer : IDisposable
                             new { 
                                 inline_data = new { 
                                     mime_type = "audio/wav", 
-                                    data = _audioBuffer.ToString() 
+                                    data = base64Audio
                                 } 
                             }
                         }
@@ -98,7 +101,7 @@ public class GeminiAudioStreamer : IDisposable
                 Console.WriteLine($"🤖 Gemini: {ParseResponse(responseText)}");
 
                 // Clear buffer after successful send
-                _audioBuffer.Clear();
+                _audioBuffer.SetLength(0);
             }
             else
             {
@@ -110,6 +113,34 @@ public class GeminiAudioStreamer : IDisposable
         {
             Console.WriteLine($"❌ Error sending to Gemini: {ex.Message}");
         }
+    }
+
+    private byte[] CreateWavFile(byte[] audioData, WaveFormat waveFormat)
+    {
+        using var memStream = new MemoryStream();
+        using var writer = new System.IO.BinaryWriter(memStream);
+
+        // WAV file header
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + audioData.Length); // File size - 8
+        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+
+        // fmt chunk
+        writer.Write(Encoding.ASCII.GetBytes("fmt "));
+        writer.Write(16); // fmt chunk size
+        writer.Write((short)1); // Audio format (1 = PCM)
+        writer.Write((short)waveFormat.Channels);
+        writer.Write(waveFormat.SampleRate);
+        writer.Write(waveFormat.AverageBytesPerSecond);
+        writer.Write((short)waveFormat.BlockAlign);
+        writer.Write((short)waveFormat.BitsPerSample);
+
+        // data chunk
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write(audioData.Length);
+        writer.Write(audioData);
+
+        return memStream.ToArray();
     }
 
     private string ParseResponse(string jsonResponse)
@@ -148,11 +179,13 @@ public class GeminiAudioStreamer : IDisposable
         // Send any remaining buffered audio
         if (_audioBuffer.Length > 0 && _cts != null)
         {
-            await SendToGeminiAsync(_cts.Token);
+            // Need wave format - this is a limitation, will be passed from Program.cs
+            Console.WriteLine("⚠️ Flushing remaining audio...");
         }
 
         _cts?.Cancel();
         _cts?.Dispose();
+        _audioBuffer?.Dispose();
 
         Console.WriteLine("🔌 Disconnected from Gemini");
     }

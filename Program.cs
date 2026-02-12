@@ -87,11 +87,11 @@ public class AudioCapturer
             {
                 _writer.Write(e.Buffer, 0, e.BytesRecorded);
                 Console.WriteLine($"📝 Recording... ({_writer.Length / 1024}KB)");
-                
+
                 // Stream to Gemini if connected
                 if (_geminiStreamer != null)
                 {
-                    await _geminiStreamer.StreamAudioAsync(e.Buffer, 0, e.BytesRecorded);
+                    await _geminiStreamer.StreamAudioAsync(e.Buffer, 0, e.BytesRecorded, _capture.WaveFormat);
                 }
             };
             
