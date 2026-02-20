@@ -17,6 +17,9 @@ public class GeminiAudioStreamer : IDisposable
     private readonly WaveFormat? _waveFormat;
     private const int BufferSizeBytes = 1024 * 1024 * 5; // 5MB buffer (fewer API calls) before sending
 
+    // Event for UI updates
+    public event Action<string>? OnResponseReceived;
+
     public GeminiAudioStreamer(string apiKey)
     {
         ArgumentNullException.ThrowIfNull(apiKey);
@@ -98,7 +101,11 @@ public class GeminiAudioStreamer : IDisposable
             if (response.IsSuccessStatusCode)
             {
                 var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
-                Console.WriteLine($"🤖 Gemini: {ParseResponse(responseText)}");
+                var parsedResponse = ParseResponse(responseText);
+                Console.WriteLine($"🤖 Gemini: {parsedResponse}");
+                
+                // Notify UI
+                OnResponseReceived?.Invoke(parsedResponse);
 
                 // Clear buffer after successful send
                 _audioBuffer.SetLength(0);
