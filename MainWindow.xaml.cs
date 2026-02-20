@@ -12,7 +12,7 @@ public partial class MainWindow : Window
     private GeminiAudioStreamer? _geminiStreamer;
     private DispatcherTimer _recordingTimer;
     private DateTime _recordingStartTime;
-    private IConfiguration _configuration;
+    private IConfiguration _configuration = null!;
 
     public MainWindow()
     {
@@ -90,13 +90,13 @@ public partial class MainWindow : Window
                 });
             };
             
-            _capturer.OnError += (error) =>
+            _capturer.OnError += async (error) =>
             {
-                Dispatcher.Invoke(() =>
+                await Dispatcher.InvokeAsync(async () =>
                 {
                     MessageBox.Show($"Error: {error}", "Recording Error", 
                         MessageBoxButton.OK, MessageBoxImage.Error);
-                    StopRecording();
+                    await StopRecording();
                 });
             };
 
