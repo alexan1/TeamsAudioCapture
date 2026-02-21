@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.Configuration;
+using MessageBox = System.Windows.MessageBox;
 
 namespace TeamsAudioCapture;
 
@@ -10,6 +11,7 @@ public partial class MainWindow : Window
 {
     private AudioCapturer? _capturer;
     private GeminiAudioStreamer? _geminiStreamer;
+    private bool _saveAudio;
     private DispatcherTimer _recordingTimer;
     private DateTime _recordingStartTime;
     private IConfiguration _configuration = null!;
@@ -75,6 +77,7 @@ public partial class MainWindow : Window
             var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
             var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
             var saveLocation = _configuration["Recording:AudioSaveLocation"];
+            _saveAudio = saveAudio;
 
             // Validate settings
             if (!saveAudio && !processWithGemini)
@@ -119,7 +122,7 @@ public partial class MainWindow : Window
             }
 
             // Create and start audio capturer
-            _capturer = new AudioCapturer(_geminiStreamer, saveLocation);
+            _capturer = new AudioCapturer(_geminiStreamer, saveLocation, saveAudio);
             
             _capturer.OnDeviceSelected += (deviceName) =>
             {
@@ -130,7 +133,9 @@ public partial class MainWindow : Window
             {
                 Dispatcher.Invoke(() =>
                 {
-                    FileSizeText.Text = $"{bytesRecorded / 1024} KB";
+                    FileSizeText.Text = _saveAudio
+                        ? $"{bytesRecorded / 1024} KB"
+                        : "N/A (not saving)";
                     
                     // Simulate audio level (you can enhance this with actual audio analysis)
                     AudioLevelBar.Value = Math.Min(100, (bytesRecorded % 1000) / 10);
@@ -148,14 +153,23 @@ public partial class MainWindow : Window
             };
 
             _capturer.Start();
+
+            var recordingModeText = (saveAudio, processWithGemini) switch
+            {
+                (true, true) => "Save & Process",
+                (true, false) => "Save only",
+                (false, true) => "Process only (not saving)",
+                _ => "Recording"
+            };
             
             // Update UI
-            StatusText.Text = "🔴 Recording...";
+            StatusText.Text = $"🔴 Recording... {recordingModeText}";
             StatusText.Foreground = System.Windows.Media.Brushes.Red;
             StartButton.IsEnabled = false;
             StopButton.IsEnabled = true;
             UploadFileButton.IsEnabled = false;
             SettingsButton.IsEnabled = false;
+            FileSizeText.Text = _saveAudio ? "0 KB" : "N/A (not saving)";
             
             _recordingStartTime = DateTime.Now;
             _recordingTimer.Start();
@@ -181,7 +195,7 @@ public partial class MainWindow : Window
             await _capturer.StopAsync();
             
             var filePath = _capturer.FilePath;
-            if (File.Exists(filePath))
+            if (_saveAudio && !string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
             {
                 var fileInfo = new FileInfo(filePath);
                 MessageBox.Show(

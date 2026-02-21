@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Navigation;
 using Microsoft.Extensions.Configuration;
+using MessageBox = System.Windows.MessageBox;
 
 namespace TeamsAudioCapture;
 

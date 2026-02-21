@@ -11,6 +11,7 @@ public class AudioCapturer
     private WasapiLoopbackCapture? _capture;
     private WaveFileWriter? _writer;
     private readonly GeminiAudioStreamer? _geminiStreamer;
+    private readonly bool _saveAudio;
     private long _totalBytesRecorded;
 
     public string FilePath { get; private set; }
@@ -20,17 +21,24 @@ public class AudioCapturer
     public event Action<long>? OnDataRecorded;
     public event Action<string>? OnError;
 
-    public AudioCapturer(GeminiAudioStreamer? geminiStreamer = null, string? saveLocation = null)
+    public AudioCapturer(GeminiAudioStreamer? geminiStreamer = null, string? saveLocation = null, bool saveAudio = true)
     {
-        var folder = string.IsNullOrWhiteSpace(saveLocation) 
-            ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
-            : saveLocation;
-
-        FilePath = Path.Combine(
-            folder,
-            $"teams-audio-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.wav"
-        );
         _geminiStreamer = geminiStreamer;
+        _saveAudio = saveAudio;
+        FilePath = string.Empty;
+
+        if (_saveAudio)
+        {
+            var folder = string.IsNullOrWhiteSpace(saveLocation)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+                : saveLocation;
+
+            FilePath = Path.Combine(
+                folder,
+                $"teams-audio-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.wav"
+            );
+        }
+
         _totalBytesRecorded = 0;
     }
 
@@ -44,13 +52,22 @@ public class AudioCapturer
             OnDeviceSelected?.Invoke(device.FriendlyName);
 
             _capture = new WasapiLoopbackCapture(device);
-            _writer = new WaveFileWriter(FilePath, _capture.WaveFormat);
+            if (_saveAudio)
+            {
+                var outputDirectory = Path.GetDirectoryName(FilePath);
+                if (!string.IsNullOrWhiteSpace(outputDirectory))
+                {
+                    Directory.CreateDirectory(outputDirectory);
+                }
+
+                _writer = new WaveFileWriter(FilePath, _capture.WaveFormat);
+            }
 
             _capture.DataAvailable += async (s, e) =>
             {
                 try
                 {
-                    _writer.Write(e.Buffer, 0, e.BytesRecorded);
+                    _writer?.Write(e.Buffer, 0, e.BytesRecorded);
                     _totalBytesRecorded += e.BytesRecorded;
                     
                     OnDataRecorded?.Invoke(_totalBytesRecorded);
