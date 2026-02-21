@@ -20,10 +20,14 @@ public class AudioCapturer
     public event Action<long>? OnDataRecorded;
     public event Action<string>? OnError;
 
-    public AudioCapturer(GeminiAudioStreamer? geminiStreamer = null)
+    public AudioCapturer(GeminiAudioStreamer? geminiStreamer = null, string? saveLocation = null)
     {
+        var folder = string.IsNullOrWhiteSpace(saveLocation) 
+            ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+            : saveLocation;
+
         FilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            folder,
             $"teams-audio-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.wav"
         );
         _geminiStreamer = geminiStreamer;

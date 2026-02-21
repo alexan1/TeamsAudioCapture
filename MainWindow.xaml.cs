@@ -34,45 +34,92 @@ public partial class MainWindow : Window
             .AddJsonFile("appsettings.Local.json", optional: true)
             .Build();
 
+        // Check Gemini API configuration
         var apiKey = _configuration["Gemini:ApiKey"];
-        
-        if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
+        var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+
+        if (processWithGemini && !string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
         {
             GeminiStatusText.Text = "(Ready to connect)";
             GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
         }
-        else
+        else if (processWithGemini)
         {
-            GeminiStatusText.Text = "(Not configured - click Settings)";
+            GeminiStatusText.Text = "(API key required - click Settings)";
             GeminiStatusText.Foreground = System.Windows.Media.Brushes.Orange;
         }
+        else
+        {
+            GeminiStatusText.Text = "(Disabled in Settings)";
+            GeminiStatusText.Foreground = System.Windows.Media.Brushes.Gray;
+        }
+
+        // Update status based on recording mode
+        var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
+        var mode = (saveAudio, processWithGemini) switch
+        {
+            (true, true) => "💾+🤖 Save & Process",
+            (true, false) => "💾 Save Only",
+            (false, true) => "🤖 Process Only",
+            _ => "⚠️ Not Configured"
+        };
+
+        Title = $"Teams Audio Capture - {mode}";
     }
 
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            // Initialize Gemini if API key is configured
-            var apiKey = _configuration["Gemini:ApiKey"];
-            if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
+            // Load settings
+            var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
+            var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+            var saveLocation = _configuration["Recording:AudioSaveLocation"];
+
+            // Validate settings
+            if (!saveAudio && !processWithGemini)
             {
-                _geminiStreamer = new GeminiAudioStreamer(apiKey);
-                await _geminiStreamer.ConnectAsync();
-                
-                _geminiStreamer.OnResponseReceived += (response) =>
+                MessageBox.Show(
+                    "Both 'Save Audio' and 'Process with Gemini' are disabled.\nPlease enable at least one option in Settings.", 
+                    "Configuration Error", 
+                    MessageBoxButton.OK, 
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            // Initialize Gemini if enabled and configured
+            if (processWithGemini)
+            {
+                var apiKey = _configuration["Gemini:ApiKey"];
+                if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
                 {
-                    Dispatcher.Invoke(() =>
+                    _geminiStreamer = new GeminiAudioStreamer(apiKey);
+                    await _geminiStreamer.ConnectAsync();
+
+                    _geminiStreamer.OnResponseReceived += (response) =>
                     {
-                        GeminiResponseText.Text += $"\n[{DateTime.Now:HH:mm:ss}] {response}\n";
-                    });
-                };
-                
-                GeminiStatusText.Text = "(Connected)";
-                GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
+                        Dispatcher.Invoke(() =>
+                        {
+                            GeminiResponseText.Text += $"\n[{DateTime.Now:HH:mm:ss}] {response}\n";
+                        });
+                    };
+
+                    GeminiStatusText.Text = "(Connected)";
+                    GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
+                }
+                else
+                {
+                    MessageBox.Show(
+                        "Gemini processing is enabled but API key is not configured.\nPlease add your API key in Settings.", 
+                        "API Key Required", 
+                        MessageBoxButton.OK, 
+                        MessageBoxImage.Warning);
+                    return;
+                }
             }
 
             // Create and start audio capturer
-            _capturer = new AudioCapturer(_geminiStreamer);
+            _capturer = new AudioCapturer(_geminiStreamer, saveLocation);
             
             _capturer.OnDeviceSelected += (deviceName) =>
             {

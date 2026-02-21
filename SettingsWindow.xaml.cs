@@ -22,11 +22,23 @@ public partial class SettingsWindow : Window
 
     private void LoadSettings()
     {
+        // Load API Key
         var apiKey = _configuration["Gemini:ApiKey"];
         if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
         {
             ApiKeyTextBox.Text = apiKey;
         }
+
+        // Load recording mode settings
+        var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
+        var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+        var saveLocation = _configuration["Recording:AudioSaveLocation"] ?? "";
+
+        SaveAudioCheckBox.IsChecked = saveAudio;
+        ProcessWithGeminiCheckBox.IsChecked = processWithGemini;
+        SaveLocationTextBox.Text = string.IsNullOrWhiteSpace(saveLocation) 
+            ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop) 
+            : saveLocation;
     }
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -34,22 +46,45 @@ public partial class SettingsWindow : Window
         try
         {
             var apiKey = ApiKeyTextBox.Text.Trim();
-            
-            if (string.IsNullOrWhiteSpace(apiKey))
+            var saveAudio = SaveAudioCheckBox.IsChecked ?? true;
+            var processWithGemini = ProcessWithGeminiCheckBox.IsChecked ?? false;
+            var saveLocation = SaveLocationTextBox.Text.Trim();
+
+            // Validation
+            if (!saveAudio && !processWithGemini)
             {
-                MessageBox.Show("Please enter an API key.", "Validation Error", 
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Please enable at least one option: Save Audio or Process with Gemini.", 
+                    "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
+            }
+
+            if (processWithGemini && string.IsNullOrWhiteSpace(apiKey))
+            {
+                MessageBox.Show("Please enter an API key to process with Gemini.", 
+                    "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Use Desktop as default if save location is empty
+            if (string.IsNullOrWhiteSpace(saveLocation))
+            {
+                saveLocation = "";
             }
 
             // Create or update appsettings.Local.json
             var localSettingsPath = Path.Combine(Directory.GetCurrentDirectory(), LocalSettingsFile);
-            
+
             var settings = new
             {
                 Gemini = new
                 {
-                    ApiKey = apiKey
+                    ApiKey = string.IsNullOrWhiteSpace(apiKey) ? "YOUR_API_KEY_HERE" : apiKey
+                },
+                Recording = new
+                {
+                    SaveAudio = saveAudio,
+                    ProcessWithGemini = processWithGemini,
+                    AudioSaveLocation = saveLocation
                 }
             };
 
@@ -77,6 +112,21 @@ public partial class SettingsWindow : Window
         {
             MessageBox.Show($"Failed to save settings: {ex.Message}", "Error", 
                 MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void BrowseButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "Select folder to save recordings",
+            ShowNewFolderButton = true,
+            SelectedPath = SaveLocationTextBox.Text
+        };
+
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            SaveLocationTextBox.Text = dialog.SelectedPath;
         }
     }
 
