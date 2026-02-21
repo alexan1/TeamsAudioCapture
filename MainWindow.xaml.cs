@@ -107,6 +107,7 @@ public partial class MainWindow : Window
             StatusText.Foreground = System.Windows.Media.Brushes.Red;
             StartButton.IsEnabled = false;
             StopButton.IsEnabled = true;
+            UploadFileButton.IsEnabled = false;
             SettingsButton.IsEnabled = false;
             
             _recordingStartTime = DateTime.Now;
@@ -158,6 +159,7 @@ public partial class MainWindow : Window
         StatusText.Foreground = System.Windows.Media.Brushes.Green;
         StartButton.IsEnabled = true;
         StopButton.IsEnabled = false;
+        UploadFileButton.IsEnabled = true;
         SettingsButton.IsEnabled = true;
         AudioLevelBar.Value = 0;
     }
@@ -174,6 +176,89 @@ public partial class MainWindow : Window
         if (settingsWindow.ShowDialog() == true)
         {
             LoadConfiguration();
+        }
+    }
+
+    private async void UploadFileButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Check if API key is configured
+            var apiKey = _configuration["Gemini:ApiKey"];
+            if (string.IsNullOrWhiteSpace(apiKey) || apiKey == "YOUR_API_KEY_HERE")
+            {
+                MessageBox.Show(
+                    "Please configure your Gemini API key in Settings first.", 
+                    "API Key Required", 
+                    MessageBoxButton.OK, 
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            // Open file dialog
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select Audio File",
+                Filter = "Audio Files (*.wav;*.mp3;*.m4a;*.ogg;*.flac)|*.wav;*.mp3;*.m4a;*.ogg;*.flac|All Files (*.*)|*.*",
+                Multiselect = false
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                var filePath = dialog.FileName;
+
+                // Disable buttons during processing
+                StartButton.IsEnabled = false;
+                StopButton.IsEnabled = false;
+                UploadFileButton.IsEnabled = false;
+                SettingsButton.IsEnabled = false;
+
+                StatusText.Text = "⏳ Processing file...";
+                StatusText.Foreground = System.Windows.Media.Brushes.Orange;
+                GeminiResponseText.Text = $"Processing: {Path.GetFileName(filePath)}\n\nPlease wait...\n";
+
+                // Initialize Gemini streamer
+                _geminiStreamer = new GeminiAudioStreamer(apiKey);
+                await _geminiStreamer.ConnectAsync();
+
+                _geminiStreamer.OnResponseReceived += (response) =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        GeminiResponseText.Text += $"\n{response}\n";
+                    });
+                };
+
+                // Process the file
+                await _geminiStreamer.ProcessAudioFileAsync(filePath);
+
+                await _geminiStreamer.DisconnectAsync();
+
+                StatusText.Text = "✅ File processed";
+                StatusText.Foreground = System.Windows.Media.Brushes.Green;
+
+                MessageBox.Show(
+                    $"File processed successfully!\n\nTranscription saved next to the original file.", 
+                    "Success", 
+                    MessageBoxButton.OK, 
+                    MessageBoxImage.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error processing file: {ex.Message}", "Error", 
+                MessageBoxButton.OK, MessageBoxImage.Error);
+
+            StatusText.Text = "❌ Error";
+            StatusText.Foreground = System.Windows.Media.Brushes.Red;
+        }
+        finally
+        {
+            // Re-enable buttons
+            StartButton.IsEnabled = true;
+            StopButton.IsEnabled = false;
+            UploadFileButton.IsEnabled = true;
+            SettingsButton.IsEnabled = true;
         }
     }
 

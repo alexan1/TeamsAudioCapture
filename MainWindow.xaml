@@ -131,6 +131,13 @@
                     <TextBlock Text="Stop Recording"/>
                 </StackPanel>
             </Button>
+            <Button x:Name="UploadFileButton" Click="UploadFileButton_Click" Width="150" 
+                    Background="#FF9800">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="📂" Margin="0,0,5,0"/>
+                    <TextBlock Text="Upload File"/>
+                </StackPanel>
+            </Button>
             <Button x:Name="SettingsButton" Click="SettingsButton_Click" Width="150" Background="#607D8B">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="⚙️" Margin="0,0,5,0"/>

@@ -17,7 +17,6 @@ public class GeminiAudioStreamer : IDisposable
     private readonly WaveFormat? _waveFormat;
     private const int BufferSizeBytes = 1024 * 1024 * 5; // 5MB buffer (fewer API calls) before sending
 
-    // Event for UI updates
     public event Action<string>? OnResponseReceived;
 
     public GeminiAudioStreamer(string apiKey)
@@ -179,6 +178,110 @@ public class GeminiAudioStreamer : IDisposable
         return jsonResponse;
     }
 
+    public async Task ProcessAudioFileAsync(string filePath)
+    {
+        if (!_isConnected || _cts == null)
+        {
+            Console.WriteLine("⚠️ Not connected to Gemini");
+            return;
+        }
+
+        if (!File.Exists(filePath))
+        {
+            Console.WriteLine($"❌ File not found: {filePath}");
+            return;
+        }
+
+        try
+        {
+            Console.WriteLine($"📂 Processing file: {Path.GetFileName(filePath)}");
+
+            // Read the entire audio file
+            var audioBytes = await File.ReadAllBytesAsync(filePath, _cts.Token);
+            var base64Audio = Convert.ToBase64String(audioBytes);
+
+            var fileExtension = Path.GetExtension(filePath).ToLower();
+            var mimeType = fileExtension switch
+            {
+                ".wav" => "audio/wav",
+                ".mp3" => "audio/mp3",
+                ".m4a" => "audio/mp4",
+                ".ogg" => "audio/ogg",
+                ".flac" => "audio/flac",
+                _ => "audio/wav"
+            };
+
+            var payload = new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        parts = new object[]
+                        {
+                            new { text = "Transcribe this audio and provide a detailed summary." },
+                            new { 
+                                inline_data = new { 
+                                    mime_type = mimeType, 
+                                    data = base64Audio
+                                } 
+                            }
+                        }
+                    }
+                }
+            };
+
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={_apiKey}";
+
+            Console.WriteLine($"⏳ Sending {audioBytes.Length / 1024 / 1024}MB to Gemini...");
+
+            var response = await _httpClient.PostAsync(url, content, _cts.Token);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var responseText = await response.Content.ReadAsStringAsync(_cts.Token);
+                var parsedResponse = ParseResponse(responseText);
+
+                Console.WriteLine($"\n🤖 Gemini Response:\n{parsedResponse}\n");
+
+                // Optionally save to file
+                var outputPath = Path.Combine(
+                    Path.GetDirectoryName(filePath) ?? "",
+                    $"{Path.GetFileNameWithoutExtension(filePath)}_transcription.txt"
+                );
+                await File.WriteAllTextAsync(outputPath, parsedResponse, _cts.Token);
+                Console.WriteLine($"💾 Transcription saved to: {outputPath}");
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync(_cts.Token);
+                Console.WriteLine($"⚠️ Gemini API error ({response.StatusCode})");
+
+                // Parse error for rate limit info
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(error);
+                        if (doc.RootElement.TryGetProperty("error", out var errorObj) &&
+                            errorObj.TryGetProperty("message", out var message))
+                        {
+                            Console.WriteLine($"⏳ {message.GetString()}");
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error processing file: {ex.Message}");
+        }
+    }
+
     public async Task DisconnectAsync()
     {
         _isConnected = false;
@@ -203,6 +306,8 @@ public class GeminiAudioStreamer : IDisposable
         _httpClient?.Dispose();
     }
 }
+
+
 
 
 
