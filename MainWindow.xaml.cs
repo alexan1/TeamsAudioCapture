@@ -279,6 +279,7 @@ public partial class MainWindow : Window
             // Load settings
             var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
             var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+            var captureMicrophone = _configuration.GetValue<bool>("Recording:CaptureMicrophone", false);
             var saveLocation = _configuration["Recording:AudioSaveLocation"];
             _saveAudio = saveAudio;
 
@@ -337,7 +338,7 @@ public partial class MainWindow : Window
             }
 
             // Create and start audio capturer
-            _capturer = new AudioCapturer(_geminiStreamer, saveLocation, saveAudio);
+            _capturer = new AudioCapturer(_geminiStreamer, saveLocation, saveAudio, captureMicrophone);
             
             _capturer.OnDeviceSelected += (deviceName) =>
             {
