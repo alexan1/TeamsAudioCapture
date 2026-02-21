@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private GeminiAudioStreamer? _geminiStreamer;
     private AnswerWindow? _answerWindow;
     private bool _saveAudio;
+    private bool _showTranscript;
     private readonly HashSet<string> _answeredQuestions = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _transcriptLock = new();
     private string _lastTranscriptChunk = string.Empty;
@@ -64,6 +65,8 @@ public partial class MainWindow : Window
 
         // Update status based on recording mode
         var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
+        _showTranscript = _configuration.GetValue<bool>("Recording:ShowTranscript", false);
+        ShowTranscriptRuntimeCheckBox.IsChecked = _showTranscript;
         var mode = (saveAudio, processWithGemini) switch
         {
             (true, true) => "💾+🤖 Save & Process",
@@ -73,6 +76,26 @@ public partial class MainWindow : Window
         };
 
         Title = $"Teams Audio Capture - {mode}";
+        UpdateTranscriptDisplayMode();
+    }
+
+    private void UpdateTranscriptDisplayMode()
+    {
+        if (_showTranscript)
+        {
+            string transcriptSnapshot;
+            lock (_transcriptLock)
+            {
+                transcriptSnapshot = _lastTranscriptChunk;
+            }
+
+            SetGeminiResponseText(string.IsNullOrWhiteSpace(transcriptSnapshot)
+                ? "Transcript enabled. Waiting for speech...\n"
+                : transcriptSnapshot);
+            return;
+        }
+
+        SetGeminiResponseText("Transcript view is hidden. Detected questions and Gemini answers appear in the Gemini Answers window.\n");
     }
 
     private void SetGeminiResponseText(string text)
@@ -278,6 +301,7 @@ public partial class MainWindow : Window
                 {
                     _geminiStreamer = new GeminiAudioStreamer(apiKey);
                     await _geminiStreamer.ConnectAsync();
+                    EnsureAnswerWindow();
 
                     _geminiStreamer.OnResponseReceived += (response) =>
                     {
@@ -287,10 +311,13 @@ public partial class MainWindow : Window
                             return;
                         }
 
-                        Dispatcher.Invoke(() =>
+                        if (_showTranscript)
                         {
-                            AppendGeminiResponseText(delta);
-                        });
+                            Dispatcher.Invoke(() =>
+                            {
+                                AppendGeminiResponseText(delta);
+                            });
+                        }
 
                         _ = TryAnswerQuestionAsync(response);
                     };
@@ -364,7 +391,9 @@ public partial class MainWindow : Window
             _answeredQuestions.Clear();
             _lastTranscriptChunk = string.Empty;
             
-                SetGeminiResponseText("Recording started...\n");
+            SetGeminiResponseText(_showTranscript
+                ? "Recording started...\n"
+                : "Transcript view is hidden. Detected questions and Gemini answers appear in the Gemini Answers window.\n");
         }
         catch (Exception ex)
         {
@@ -430,6 +459,12 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ShowTranscriptRuntimeCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        _showTranscript = ShowTranscriptRuntimeCheckBox.IsChecked == true;
+        UpdateTranscriptDisplayMode();
+    }
+
     private async void UploadFileButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -466,11 +501,14 @@ public partial class MainWindow : Window
 
                 StatusText.Text = "⏳ Processing file...";
                 StatusText.Foreground = System.Windows.Media.Brushes.Orange;
-                SetGeminiResponseText($"Processing: {Path.GetFileName(filePath)}\n\nPlease wait...\n");
+                SetGeminiResponseText(_showTranscript
+                    ? $"Processing: {Path.GetFileName(filePath)}\n\nPlease wait...\n"
+                    : "Transcript view is hidden. Detected questions and Gemini answers appear in the Gemini Answers window.\n");
 
                 // Initialize Gemini streamer
                 _geminiStreamer = new GeminiAudioStreamer(apiKey);
                 await _geminiStreamer.ConnectAsync();
+                EnsureAnswerWindow();
 
                 _geminiStreamer.OnResponseReceived += (response) =>
                 {
@@ -480,10 +518,15 @@ public partial class MainWindow : Window
                         return;
                     }
 
-                    Dispatcher.Invoke(() =>
+                    if (_showTranscript)
                     {
-                        AppendGeminiResponseText(delta);
-                    });
+                        Dispatcher.Invoke(() =>
+                        {
+                            AppendGeminiResponseText(delta);
+                        });
+                    }
+
+                    _ = TryAnswerQuestionAsync(response);
                 };
                 _lastTranscriptChunk = string.Empty;
                 // Process the file

@@ -81,6 +81,8 @@
                                   IsChecked="True" Margin="0,5,0,5" FontSize="13"/>
                         <CheckBox x:Name="ProcessWithGeminiCheckBox" Content="Process audio with Gemini API" 
                                   Margin="0,5,0,5" FontSize="13"/>
+                        <CheckBox x:Name="ShowTranscriptCheckBox" Content="Show transcript in main window" 
+                                  Margin="0,5,0,5" FontSize="13"/>
 
                         <TextBlock TextWrapping="Wrap" Foreground="#999" FontSize="11" Margin="0,10,0,0">
                             Note: You can enable both options to save and process simultaneously.

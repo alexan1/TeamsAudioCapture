@@ -33,10 +33,12 @@ public partial class SettingsWindow : Window
         // Load recording mode settings
         var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
         var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+        var showTranscript = _configuration.GetValue<bool>("Recording:ShowTranscript", false);
         var saveLocation = _configuration["Recording:AudioSaveLocation"] ?? "";
 
         SaveAudioCheckBox.IsChecked = saveAudio;
         ProcessWithGeminiCheckBox.IsChecked = processWithGemini;
+        ShowTranscriptCheckBox.IsChecked = showTranscript;
         SaveLocationTextBox.Text = string.IsNullOrWhiteSpace(saveLocation) 
             ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop) 
             : saveLocation;
@@ -49,6 +51,7 @@ public partial class SettingsWindow : Window
             var apiKey = ApiKeyTextBox.Text.Trim();
             var saveAudio = SaveAudioCheckBox.IsChecked ?? true;
             var processWithGemini = ProcessWithGeminiCheckBox.IsChecked ?? false;
+            var showTranscript = ShowTranscriptCheckBox.IsChecked ?? false;
             var saveLocation = SaveLocationTextBox.Text.Trim();
 
             // Validation
@@ -85,6 +88,7 @@ public partial class SettingsWindow : Window
                 {
                     SaveAudio = saveAudio,
                     ProcessWithGemini = processWithGemini,
+                    ShowTranscript = showTranscript,
                     AudioSaveLocation = saveLocation
                 }
             };

@@ -53,6 +53,11 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,20">
             <TextBlock Text="🎙️ Teams Audio Capture" FontSize="24" FontWeight="Bold" Foreground="#333"/>
             <TextBlock Text="Capture system audio and stream to Gemini Voice API" Foreground="#666" FontSize="12"/>
+            <CheckBox x:Name="ShowTranscriptRuntimeCheckBox"
+                      Content="Show Transcript"
+                      Margin="5,8,5,0"
+                      Checked="ShowTranscriptRuntimeCheckBox_Changed"
+                      Unchecked="ShowTranscriptRuntimeCheckBox_Changed"/>
         </StackPanel>
         
         <!-- Status Panel -->
