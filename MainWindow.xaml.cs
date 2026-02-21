@@ -69,6 +69,28 @@ public partial class MainWindow : Window
         Title = $"Teams Audio Capture - {mode}";
     }
 
+    private void SetGeminiResponseText(string text)
+    {
+        GeminiResponseText.Text = text;
+        ScrollTranscriptToEnd();
+    }
+
+    private void AppendGeminiResponseText(string text)
+    {
+        GeminiResponseText.Text += text;
+        ScrollTranscriptToEnd();
+    }
+
+    private void ScrollTranscriptToEnd()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            GeminiResponseText.UpdateLayout();
+            GeminiResponseScrollViewer.UpdateLayout();
+            GeminiResponseScrollViewer.ScrollToBottom();
+        }, DispatcherPriority.Render);
+    }
+
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -103,7 +125,7 @@ public partial class MainWindow : Window
                     {
                         Dispatcher.Invoke(() =>
                         {
-                            GeminiResponseText.Text += $"\n[{DateTime.Now:HH:mm:ss}] {response}\n";
+                            AppendGeminiResponseText($"\n[{DateTime.Now:HH:mm:ss}] {response}\n");
                         });
                     };
 
@@ -174,7 +196,7 @@ public partial class MainWindow : Window
             _recordingStartTime = DateTime.Now;
             _recordingTimer.Start();
             
-            GeminiResponseText.Text = "Recording started...\n";
+                SetGeminiResponseText("Recording started...\n");
         }
         catch (Exception ex)
         {
@@ -276,7 +298,7 @@ public partial class MainWindow : Window
 
                 StatusText.Text = "⏳ Processing file...";
                 StatusText.Foreground = System.Windows.Media.Brushes.Orange;
-                GeminiResponseText.Text = $"Processing: {Path.GetFileName(filePath)}\n\nPlease wait...\n";
+                SetGeminiResponseText($"Processing: {Path.GetFileName(filePath)}\n\nPlease wait...\n");
 
                 // Initialize Gemini streamer
                 _geminiStreamer = new GeminiAudioStreamer(apiKey);
@@ -286,10 +308,9 @@ public partial class MainWindow : Window
                 {
                     Dispatcher.Invoke(() =>
                     {
-                        GeminiResponseText.Text += $"\n{response}\n";
+                        AppendGeminiResponseText($"\n{response}\n");
                     });
                 };
-
                 // Process the file
                 await _geminiStreamer.ProcessAudioFileAsync(filePath);
 

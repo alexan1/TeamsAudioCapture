@@ -77,7 +77,7 @@ public class GeminiAudioStreamer : IDisposable
                     {
                         parts = new object[]
                         {
-                            new { text = "Transcribe this audio and provide a summary." },
+                            new { text = "Transcribe this audio. Return only the transcript text. Do not provide a summary." },
                             new { 
                                 inline_data = new { 
                                     mime_type = "audio/wav", 
@@ -218,7 +218,7 @@ public class GeminiAudioStreamer : IDisposable
                     {
                         parts = new object[]
                         {
-                            new { text = "Transcribe this audio and provide a detailed summary." },
+                            new { text = "Transcribe this audio file. Return only the transcript text. Do not provide a summary." },
                             new { 
                                 inline_data = new { 
                                     mime_type = mimeType, 

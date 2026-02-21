@@ -108,7 +108,7 @@
                     <TextBlock x:Name="GeminiStatusText" Text="(Not connected)" Foreground="#999" Margin="10,0,0,0"/>
                 </StackPanel>
                 
-                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer x:Name="GeminiResponseScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto">
                     <TextBlock x:Name="GeminiResponseText" TextWrapping="Wrap" 
                               Text="Gemini responses will appear here during recording..."
                               Foreground="#666" FontFamily="Consolas"/>
