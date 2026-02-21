@@ -1,0 +1,23 @@
+<Window x:Class="TeamsAudioCapture.AnswerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Gemini Answers" Height="420" Width="600"
+        WindowStartupLocation="CenterOwner"
+        Background="#F5F5F5">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="🤖 Live Answers" FontSize="16" FontWeight="Bold" Foreground="#333" Margin="0,0,0,10"/>
+
+        <ScrollViewer x:Name="AnswerScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" Background="White">
+            <TextBlock x:Name="AnswerTextBlock"
+                       TextWrapping="Wrap"
+                       Foreground="#222"
+                       FontFamily="Consolas"
+                       Padding="10"/>
+        </ScrollViewer>
+    </Grid>
+</Window>

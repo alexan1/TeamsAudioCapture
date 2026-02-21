@@ -10,6 +10,7 @@ public class AudioCapturer
 {
     private WasapiLoopbackCapture? _capture;
     private WaveFileWriter? _writer;
+    private EventHandler<WaveInEventArgs>? _dataAvailableHandler;
     private readonly GeminiAudioStreamer? _geminiStreamer;
     private readonly bool _saveAudio;
     private long _totalBytesRecorded;
@@ -63,7 +64,7 @@ public class AudioCapturer
                 _writer = new WaveFileWriter(FilePath, _capture.WaveFormat);
             }
 
-            _capture.DataAvailable += async (s, e) =>
+            _dataAvailableHandler = async (s, e) =>
             {
                 try
                 {
@@ -83,6 +84,7 @@ public class AudioCapturer
                     OnError?.Invoke($"Data recording error: {ex.Message}");
                 }
             };
+            _capture.DataAvailable += _dataAvailableHandler;
 
             _capture.RecordingStopped += (s, e) =>
             {
@@ -102,13 +104,21 @@ public class AudioCapturer
     {
         try
         {
+            if (_capture != null && _dataAvailableHandler != null)
+            {
+                _capture.DataAvailable -= _dataAvailableHandler;
+                _dataAvailableHandler = null;
+            }
+
             _capture?.StopRecording();
 
             // Give time for final audio chunks to process
-            await Task.Delay(100);
+            await Task.Delay(100).ConfigureAwait(false);
 
             _writer?.Dispose();
             _capture?.Dispose();
+            _writer = null;
+            _capture = null;
         }
         catch (Exception ex)
         {

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.Configuration;
@@ -11,7 +13,11 @@ public partial class MainWindow : Window
 {
     private AudioCapturer? _capturer;
     private GeminiAudioStreamer? _geminiStreamer;
+    private AnswerWindow? _answerWindow;
     private bool _saveAudio;
+    private readonly HashSet<string> _answeredQuestions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _transcriptLock = new();
+    private string _lastTranscriptChunk = string.Empty;
     private DispatcherTimer _recordingTimer;
     private DateTime _recordingStartTime;
     private IConfiguration _configuration = null!;
@@ -91,6 +97,158 @@ public partial class MainWindow : Window
         }, DispatcherPriority.Render);
     }
 
+    private string? GetTranscriptDelta(string transcriptChunk)
+    {
+        var normalized = transcriptChunk.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return null;
+        }
+
+        lock (_transcriptLock)
+        {
+            if (string.IsNullOrWhiteSpace(_lastTranscriptChunk))
+            {
+                _lastTranscriptChunk = normalized;
+                return normalized;
+            }
+
+            if (string.Equals(_lastTranscriptChunk, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (normalized.StartsWith(_lastTranscriptChunk, StringComparison.OrdinalIgnoreCase))
+            {
+                var suffix = normalized[_lastTranscriptChunk.Length..];
+                _lastTranscriptChunk = normalized;
+                return string.IsNullOrWhiteSpace(suffix) ? null : suffix;
+            }
+
+            if (_lastTranscriptChunk.StartsWith(normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var maxOverlap = Math.Min(_lastTranscriptChunk.Length, normalized.Length);
+            var overlapLength = 0;
+
+            for (var i = maxOverlap; i > 0; i--)
+            {
+                if (_lastTranscriptChunk.EndsWith(normalized[..i], StringComparison.OrdinalIgnoreCase))
+                {
+                    overlapLength = i;
+                    break;
+                }
+            }
+
+            if (overlapLength > 0)
+            {
+                var suffix = normalized[overlapLength..];
+                _lastTranscriptChunk += suffix;
+                return string.IsNullOrWhiteSpace(suffix) ? null : suffix;
+            }
+
+            if (_lastTranscriptChunk.Contains(normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            _lastTranscriptChunk += Environment.NewLine + normalized;
+            return Environment.NewLine + normalized;
+        }
+    }
+
+    private static string? ExtractQuestion(string transcriptText)
+    {
+        if (string.IsNullOrWhiteSpace(transcriptText))
+        {
+            return null;
+        }
+
+        var lines = transcriptText
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => line.Contains('?'))
+            .ToList();
+
+        if (lines.Count == 0)
+        {
+            return null;
+        }
+
+        var candidate = lines[^1];
+        var questionEnd = candidate.LastIndexOf('?');
+        if (questionEnd < 0)
+        {
+            return null;
+        }
+
+        var question = candidate[..(questionEnd + 1)].Trim();
+        return question.Length < 3 ? null : question;
+    }
+
+    private async System.Threading.Tasks.Task TryAnswerQuestionAsync(string transcriptChunk)
+    {
+        if (_geminiStreamer == null)
+        {
+            return;
+        }
+
+        var question = ExtractQuestion(transcriptChunk);
+        if (string.IsNullOrWhiteSpace(question))
+        {
+            return;
+        }
+
+        if (!_answeredQuestions.Add(question))
+        {
+            return;
+        }
+
+        var answer = await _geminiStreamer.GetAnswerForQuestionAsync(question);
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            return;
+        }
+
+        await Dispatcher.InvokeAsync(() =>
+        {
+            EnsureAnswerWindow();
+            _answerWindow?.AppendAnswer(question, answer);
+        });
+    }
+
+    private void EnsureAnswerWindow()
+    {
+        if (_answerWindow != null)
+        {
+            if (!_answerWindow.IsVisible)
+            {
+                _answerWindow.Show();
+            }
+
+            if (_answerWindow.WindowState == WindowState.Minimized)
+            {
+                _answerWindow.WindowState = WindowState.Normal;
+            }
+
+            return;
+        }
+
+        _answerWindow = new AnswerWindow
+        {
+            Owner = this
+        };
+
+        _answerWindow.Closed += (_, _) =>
+        {
+            _answerWindow = null;
+        };
+
+        _answerWindow.Show();
+    }
+
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -123,10 +281,18 @@ public partial class MainWindow : Window
 
                     _geminiStreamer.OnResponseReceived += (response) =>
                     {
+                        var delta = GetTranscriptDelta(response);
+                        if (string.IsNullOrWhiteSpace(delta))
+                        {
+                            return;
+                        }
+
                         Dispatcher.Invoke(() =>
                         {
-                            AppendGeminiResponseText($"\n[{DateTime.Now:HH:mm:ss}] {response}\n");
+                            AppendGeminiResponseText(delta);
                         });
+
+                        _ = TryAnswerQuestionAsync(response);
                     };
 
                     GeminiStatusText.Text = "(Connected)";
@@ -195,6 +361,8 @@ public partial class MainWindow : Window
             
             _recordingStartTime = DateTime.Now;
             _recordingTimer.Start();
+            _answeredQuestions.Clear();
+            _lastTranscriptChunk = string.Empty;
             
                 SetGeminiResponseText("Recording started...\n");
         }
@@ -306,11 +474,18 @@ public partial class MainWindow : Window
 
                 _geminiStreamer.OnResponseReceived += (response) =>
                 {
+                    var delta = GetTranscriptDelta(response);
+                    if (string.IsNullOrWhiteSpace(delta))
+                    {
+                        return;
+                    }
+
                     Dispatcher.Invoke(() =>
                     {
-                        AppendGeminiResponseText($"\n{response}\n");
+                        AppendGeminiResponseText(delta);
                     });
                 };
+                _lastTranscriptChunk = string.Empty;
                 // Process the file
                 await _geminiStreamer.ProcessAudioFileAsync(filePath);
 
@@ -346,9 +521,10 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _answerWindow?.Close();
         base.OnClosed(e);
         _recordingTimer.Stop();
-        _capturer?.StopAsync().Wait();
-        _geminiStreamer?.DisconnectAsync().Wait();
+        _capturer?.StopAsync().GetAwaiter().GetResult();
+        _geminiStreamer?.DisconnectAsync().GetAwaiter().GetResult();
     }
 }

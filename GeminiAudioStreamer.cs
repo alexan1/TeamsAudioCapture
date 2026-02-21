@@ -281,6 +281,65 @@ public class GeminiAudioStreamer : IDisposable
         }
     }
 
+    public async Task<string?> GetAnswerForQuestionAsync(string question, CancellationToken cancellationToken = default)
+    {
+        if (!_isConnected)
+        {
+            Console.WriteLine("⚠️ Not connected to Gemini");
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(question))
+        {
+            return null;
+        }
+
+        try
+        {
+            var tokenToUse = cancellationToken == default && _cts != null
+                ? _cts.Token
+                : cancellationToken;
+
+            var payload = new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        parts = new object[]
+                        {
+                            new
+                            {
+                                text = $"Answer this question from a live transcript. Be brief and direct. If the transcript does not provide enough context, say you are not sure.\n\nQuestion: {question}"
+                            }
+                        }
+                    }
+                }
+            };
+
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var url = $"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={_apiKey}";
+            var response = await _httpClient.PostAsync(url, content, tokenToUse);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(tokenToUse);
+                Console.WriteLine($"⚠️ Gemini QA API error ({response.StatusCode}): {error}");
+                return null;
+            }
+
+            var responseText = await response.Content.ReadAsStringAsync(tokenToUse);
+            return ParseResponse(responseText);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error getting answer from Gemini: {ex.Message}");
+            return null;
+        }
+    }
+
     public async Task DisconnectAsync()
     {
         _isConnected = false;
