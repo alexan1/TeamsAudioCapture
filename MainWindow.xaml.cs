@@ -301,30 +301,58 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
                 {
                     _geminiStreamer = new GeminiAudioStreamer(apiKey);
-                    await _geminiStreamer.ConnectAsync();
-                    EnsureAnswerWindow();
 
-                    _geminiStreamer.OnResponseReceived += (response) =>
+                    try
                     {
-                        var delta = GetTranscriptDelta(response);
-                        if (string.IsNullOrWhiteSpace(delta))
+                        await _geminiStreamer.ConnectAsync();
+                        EnsureAnswerWindow();
+
+                        _geminiStreamer.OnResponseReceived += (response) =>
                         {
+                            var delta = GetTranscriptDelta(response);
+                            if (string.IsNullOrWhiteSpace(delta))
+                            {
+                                return;
+                            }
+
+                            if (_showTranscript)
+                            {
+                                Dispatcher.Invoke(() =>
+                                {
+                                    AppendGeminiResponseText(delta);
+                                });
+                            }
+
+                            _ = TryAnswerQuestionAsync(response);
+                        };
+
+                        GeminiStatusText.Text = "(Connected)";
+                        GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
+                    }
+                    catch (Exception ex)
+                    {
+                        _geminiStreamer = null;
+
+                        if (!saveAudio)
+                        {
+                            MessageBox.Show(
+                                $"Failed to connect to Gemini Live API.\n\n{ex.Message}\n\nEnable Save Audio in Settings or fix Gemini configuration.",
+                                "Gemini Connection Failed",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Error);
                             return;
                         }
 
-                        if (_showTranscript)
-                        {
-                            Dispatcher.Invoke(() =>
-                            {
-                                AppendGeminiResponseText(delta);
-                            });
-                        }
+                        processWithGemini = false;
+                        GeminiStatusText.Text = "(Connection failed - recording without Gemini)";
+                        GeminiStatusText.Foreground = System.Windows.Media.Brushes.Orange;
 
-                        _ = TryAnswerQuestionAsync(response);
-                    };
-
-                    GeminiStatusText.Text = "(Connected)";
-                    GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
+                        MessageBox.Show(
+                            $"Gemini Live API connection failed. Recording will continue with audio capture only.\n\n{ex.Message}",
+                            "Gemini Unavailable",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }
                 }
                 else
                 {

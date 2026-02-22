@@ -59,7 +59,14 @@ public class AudioCapturer
         try
         {
             var enumerator = new MMDeviceEnumerator();
-            var systemDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            var systemDevice = GetDefaultAudioEndpointWithFallback(
+                enumerator,
+                DataFlow.Render,
+                "system audio output",
+                Role.Multimedia,
+                Role.Console,
+                Role.Communications
+            );
 
             var deviceInfo = $"System: {systemDevice.FriendlyName}";
 
@@ -70,7 +77,14 @@ public class AudioCapturer
             {
                 try
                 {
-                    var micDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
+                    var micDevice = GetDefaultAudioEndpointWithFallback(
+                        enumerator,
+                        DataFlow.Capture,
+                        "microphone input",
+                        Role.Communications,
+                        Role.Multimedia,
+                        Role.Console
+                    );
                     deviceInfo += $" + Mic: {micDevice.FriendlyName}";
                     _micCapture = new WasapiCapture(micDevice);
 
@@ -92,7 +106,7 @@ public class AudioCapturer
                 }
                 catch (Exception ex)
                 {
-                    OnError?.Invoke($"Microphone capture failed: {ex.Message}. Continuing with system audio only.");
+                    Console.WriteLine($"⚠️ Microphone capture unavailable: {ex.Message}. Continuing with system audio only.");
                     _micCapture?.Dispose();
                     _micCapture = null;
                     _systemBuffer = null;
@@ -181,6 +195,29 @@ public class AudioCapturer
             OnError?.Invoke(ex.Message);
             throw;
         }
+    }
+
+    private static MMDevice GetDefaultAudioEndpointWithFallback(MMDeviceEnumerator enumerator, DataFlow dataFlow, string endpointDescription, params Role[] roles)
+    {
+        Exception? lastException = null;
+
+        foreach (var role in roles)
+        {
+            try
+            {
+                return enumerator.GetDefaultAudioEndpoint(dataFlow, role);
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+            }
+        }
+
+        var roleList = string.Join(", ", roles);
+        throw new InvalidOperationException(
+            $"No default {endpointDescription} device is available for roles [{roleList}].", 
+            lastException
+        );
     }
 
     private byte[] ConvertAudioFormat(byte[] input, int length, WaveFormat sourceFormat, WaveFormat targetFormat)

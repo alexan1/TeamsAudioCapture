@@ -11,6 +11,7 @@ using NAudio.Wave.SampleProviders;
 
 public class GeminiAudioStreamer : IDisposable
 {
+    private const string DefaultLiveModel = "models/gemini-2.0-flash-live-001";
     private readonly string _apiKey;
     private readonly HttpClient _httpClient;
     private ClientWebSocket? _webSocket;
@@ -18,6 +19,7 @@ public class GeminiAudioStreamer : IDisposable
     private bool _isConnected;
     private Task? _receiveTask;
     private WaveFormat? _currentWaveFormat;
+    private TaskCompletionSource<bool>? _setupCompletionSource;
 
     public event Action<string>? OnResponseReceived;
 
@@ -34,6 +36,7 @@ public class GeminiAudioStreamer : IDisposable
         {
             _cts = new CancellationTokenSource();
             _webSocket = new ClientWebSocket();
+            _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             // Connect to Gemini Live API
             var uri = new Uri($"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={_apiKey}");
@@ -46,6 +49,9 @@ public class GeminiAudioStreamer : IDisposable
 
             // Start receiving messages
             _receiveTask = Task.Run(() => ReceiveMessagesAsync(_cts.Token), _cts.Token);
+
+            await SendSetupMessageAsync(_cts.Token);
+            Console.WriteLine("⏳ Setup sent; waiting for live responses...");
         }
         catch (Exception ex)
         {
@@ -68,7 +74,6 @@ public class GeminiAudioStreamer : IDisposable
             if (_currentWaveFormat == null)
             {
                 _currentWaveFormat = waveFormat;
-                await SendSetupMessageAsync(waveFormat, _cts.Token);
             }
 
             // Convert audio to PCM16 if needed and send immediately
@@ -83,7 +88,7 @@ public class GeminiAudioStreamer : IDisposable
                     {
                         new
                         {
-                            mimeType = "audio/pcm",
+                            mimeType = "audio/pcm;rate=16000",
                             data = base64Audio
                         }
                     }
@@ -106,7 +111,23 @@ public class GeminiAudioStreamer : IDisposable
         }
     }
 
-    private async Task SendSetupMessageAsync(WaveFormat waveFormat, CancellationToken ct)
+    private async Task WaitForSetupCompleteAsync(CancellationToken cancellationToken)
+    {
+        if (_setupCompletionSource == null)
+        {
+            throw new InvalidOperationException("Live API setup state is not initialized.");
+        }
+
+        if (_setupCompletionSource.Task.IsCompleted)
+        {
+            await _setupCompletionSource.Task;
+            return;
+        }
+
+        await _setupCompletionSource.Task.WaitAsync(cancellationToken);
+    }
+
+    private async Task SendSetupMessageAsync(CancellationToken ct)
     {
         try
         {
@@ -114,14 +135,10 @@ public class GeminiAudioStreamer : IDisposable
             {
                 setup = new
                 {
-                    model = "models/gemini-2.0-flash-exp",
+                    model = DefaultLiveModel,
                     generationConfig = new
                     {
-                        responseModalities = "TEXT",
-                        speechConfig = new
-                        {
-                            voiceConfig = new { prebuiltVoiceConfig = new { voiceName = "Aoede" } }
-                        }
+                        responseModalities = new[] { "TEXT" }
                     },
                     systemInstruction = new
                     {
@@ -148,6 +165,8 @@ public class GeminiAudioStreamer : IDisposable
         catch (Exception ex)
         {
             Console.WriteLine($"❌ Error sending setup: {ex.Message}");
+            _setupCompletionSource?.TrySetException(ex);
+            throw;
         }
     }
 
@@ -237,10 +256,15 @@ public class GeminiAudioStreamer : IDisposable
         catch (OperationCanceledException)
         {
             Console.WriteLine("🛑 Receive task cancelled");
+            if (_isConnected)
+            {
+                _setupCompletionSource?.TrySetCanceled();
+            }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"❌ Error receiving messages: {ex.Message}");
+            _setupCompletionSource?.TrySetException(ex);
         }
     }
 
@@ -275,12 +299,22 @@ public class GeminiAudioStreamer : IDisposable
             if (doc.RootElement.TryGetProperty("setupComplete", out _))
             {
                 Console.WriteLine("✅ Gemini setup complete, ready to receive audio");
+                _setupCompletionSource?.TrySetResult(true);
             }
 
             // Handle errors
             if (doc.RootElement.TryGetProperty("error", out var error))
             {
-                Console.WriteLine($"❌ Gemini error: {error.GetRawText()}");
+                var errorMessage = error.GetRawText();
+                Console.WriteLine($"❌ Gemini error: {errorMessage}");
+                _setupCompletionSource?.TrySetException(new InvalidOperationException($"Gemini Live API error: {errorMessage}"));
+            }
+
+            if (!doc.RootElement.TryGetProperty("serverContent", out _) &&
+                !doc.RootElement.TryGetProperty("setupComplete", out _) &&
+                !doc.RootElement.TryGetProperty("error", out _))
+            {
+                Console.WriteLine($"ℹ️ Gemini message: {json}");
             }
         }
         catch (Exception ex)
@@ -490,6 +524,7 @@ public class GeminiAudioStreamer : IDisposable
         {
             // Cancel operations
             _cts?.Cancel();
+            _setupCompletionSource?.TrySetCanceled();
 
             // Wait for receive task to complete
             if (_receiveTask != null)
@@ -520,6 +555,8 @@ public class GeminiAudioStreamer : IDisposable
         {
             _cts?.Dispose();
             _cts = null;
+            _setupCompletionSource = null;
+            _currentWaveFormat = null;
         }
     }
 
