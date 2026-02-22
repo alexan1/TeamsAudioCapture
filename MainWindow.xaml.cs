@@ -305,6 +305,12 @@ public partial class MainWindow : Window
                     try
                     {
                         await _geminiStreamer.ConnectAsync();
+
+                        // CRITICAL: Wait for Gemini setup to complete before starting audio capture
+                        // Use timeout to prevent indefinite hanging
+                        using var timeoutCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        await _geminiStreamer.WaitForSetupCompleteAsync(timeoutCts.Token);
+
                         EnsureAnswerWindow();
 
                         _geminiStreamer.OnResponseReceived += (response) =>
@@ -333,10 +339,14 @@ public partial class MainWindow : Window
                     {
                         _geminiStreamer = null;
 
+                        var errorDetails = ex is TaskCanceledException or OperationCanceledException
+                            ? "Setup timed out after 10 seconds. The Gemini API may be unavailable or slow to respond."
+                            : ex.Message;
+
                         if (!saveAudio)
                         {
                             MessageBox.Show(
-                                $"Failed to connect to Gemini Live API.\n\n{ex.Message}\n\nEnable Save Audio in Settings or fix Gemini configuration.",
+                                $"Failed to connect to Gemini Live API.\n\n{errorDetails}\n\nEnable Save Audio in Settings or fix Gemini configuration.",
                                 "Gemini Connection Failed",
                                 MessageBoxButton.OK,
                                 MessageBoxImage.Error);
@@ -348,7 +358,7 @@ public partial class MainWindow : Window
                         GeminiStatusText.Foreground = System.Windows.Media.Brushes.Orange;
 
                         MessageBox.Show(
-                            $"Gemini Live API connection failed. Recording will continue with audio capture only.\n\n{ex.Message}",
+                            $"Gemini Live API connection failed. Recording will continue with audio capture only.\n\n{errorDetails}",
                             "Gemini Unavailable",
                             MessageBoxButton.OK,
                             MessageBoxImage.Warning);

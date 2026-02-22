@@ -34,6 +34,21 @@ public class GeminiAudioStreamer : IDisposable
     {
         try
         {
+            // First, test if API key works with regular API
+            Console.WriteLine("🔑 Testing API key with regular Gemini API first...");
+            var testUrl = $"https://generativelanguage.googleapis.com/v1/models?key={_apiKey}";
+            var testResponse = await _httpClient.GetAsync(testUrl);
+            if (testResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine("✅ API key is valid for regular Gemini API");
+            }
+            else
+            {
+                var error = await testResponse.Content.ReadAsStringAsync();
+                Console.WriteLine($"❌ API key test failed: {testResponse.StatusCode}");
+                Console.WriteLine($"   Error: {error}");
+            }
+
             _cts = new CancellationTokenSource();
             _webSocket = new ClientWebSocket();
             _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -41,7 +56,7 @@ public class GeminiAudioStreamer : IDisposable
             // Connect to Gemini Live API
             var uri = new Uri($"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={_apiKey}");
 
-            Console.WriteLine("🌐 Connecting to Gemini Live API...");
+            Console.WriteLine("🌐 Connecting to Gemini Live API (v1alpha - early access)...");
             await _webSocket.ConnectAsync(uri, _cts.Token);
 
             _isConnected = true;
@@ -64,6 +79,12 @@ public class GeminiAudioStreamer : IDisposable
     public async Task StreamAudioAsync(byte[] audioData, int offset, int count, WaveFormat waveFormat)
     {
         if (!_isConnected || _webSocket == null || _cts == null)
+        {
+            return;
+        }
+
+        // Skip sending if setup hasn't completed yet (non-blocking check)
+        if (_setupCompletionSource != null && !_setupCompletionSource.Task.IsCompleted)
         {
             return;
         }
@@ -111,7 +132,7 @@ public class GeminiAudioStreamer : IDisposable
         }
     }
 
-    private async Task WaitForSetupCompleteAsync(CancellationToken cancellationToken)
+    public async Task WaitForSetupCompleteAsync(CancellationToken cancellationToken)
     {
         if (_setupCompletionSource == null)
         {
@@ -124,7 +145,22 @@ public class GeminiAudioStreamer : IDisposable
             return;
         }
 
-        await _setupCompletionSource.Task.WaitAsync(cancellationToken);
+        Console.WriteLine("⏳ Waiting for setup completion...");
+        try
+        {
+            await _setupCompletionSource.Task.WaitAsync(cancellationToken);
+            Console.WriteLine("✅ Setup wait completed successfully");
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine("❌ Setup wait was canceled or timed out");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Setup wait failed: {ex.Message}");
+            throw;
+        }
     }
 
     private async Task SendSetupMessageAsync(CancellationToken ct)
