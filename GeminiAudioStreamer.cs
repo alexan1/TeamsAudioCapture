@@ -1,20 +1,23 @@
 using System;
 using System.IO;
 using System.Net.Http;
+using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 
 public class GeminiAudioStreamer : IDisposable
 {
     private readonly string _apiKey;
     private readonly HttpClient _httpClient;
+    private ClientWebSocket? _webSocket;
     private CancellationTokenSource? _cts;
     private bool _isConnected;
-    private readonly MemoryStream _audioBuffer;
-    private const int BufferSizeBytes = 1024 * 1024 * 5; // 5MB buffer (fewer API calls) before sending
+    private Task? _receiveTask;
+    private WaveFormat? _currentWaveFormat;
 
     public event Action<string>? OnResponseReceived;
 
@@ -23,158 +26,268 @@ public class GeminiAudioStreamer : IDisposable
         ArgumentNullException.ThrowIfNull(apiKey);
         _apiKey = apiKey;
         _httpClient = new HttpClient();
-        _audioBuffer = new MemoryStream();
     }
 
-    public Task ConnectAsync()
+    public async Task ConnectAsync()
     {
-        _isConnected = true;
-        _cts = new CancellationTokenSource();
-        Console.WriteLine("🌐 Connected to Gemini API");
-        return Task.CompletedTask;
+        try
+        {
+            _cts = new CancellationTokenSource();
+            _webSocket = new ClientWebSocket();
+
+            // Connect to Gemini Live API
+            var uri = new Uri($"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={_apiKey}");
+
+            Console.WriteLine("🌐 Connecting to Gemini Live API...");
+            await _webSocket.ConnectAsync(uri, _cts.Token);
+
+            _isConnected = true;
+            Console.WriteLine("✅ Connected to Gemini Live API");
+
+            // Start receiving messages
+            _receiveTask = Task.Run(() => ReceiveMessagesAsync(_cts.Token), _cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Failed to connect to Gemini: {ex.Message}");
+            _isConnected = false;
+            throw;
+        }
     }
 
     public async Task StreamAudioAsync(byte[] audioData, int offset, int count, WaveFormat waveFormat)
     {
-        if (!_isConnected || _cts == null)
+        if (!_isConnected || _webSocket == null || _cts == null)
         {
-            Console.WriteLine("⚠️ Not connected to Gemini");
             return;
         }
 
         try
         {
-            // Buffer raw audio bytes
-            _audioBuffer.Write(audioData, offset, count);
-
-            // Send to Gemini when buffer reaches threshold
-            if (_audioBuffer.Length >= BufferSizeBytes)
+            // Store wave format for first call
+            if (_currentWaveFormat == null)
             {
-                await SendToGeminiAsync(waveFormat, _cts.Token);
+                _currentWaveFormat = waveFormat;
+                await SendSetupMessageAsync(waveFormat, _cts.Token);
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error buffering audio: {ex.Message}");
-        }
-    }
 
-    private async Task SendToGeminiAsync(WaveFormat waveFormat, CancellationToken cancellationToken)
-    {
-        if (_audioBuffer.Length == 0) return;
+            // Convert audio to PCM16 if needed and send immediately
+            var pcm16Data = ConvertToPCM16(audioData, offset, count, waveFormat);
+            var base64Audio = Convert.ToBase64String(pcm16Data);
 
-        try
-        {
-            // Create a complete WAV file from buffered audio
-            var wavBytes = CreateWavFile(_audioBuffer.ToArray(), waveFormat);
-            var base64Audio = Convert.ToBase64String(wavBytes);
-
-            var payload = new
+            var message = new
             {
-                contents = new[]
+                realtimeInput = new
                 {
-                    new
+                    mediaChunks = new[]
                     {
-                        parts = new object[]
+                        new
                         {
-                            new { text = "Transcribe this audio. Return only the transcript text. Do not provide a summary." },
-                            new { 
-                                inline_data = new { 
-                                    mime_type = "audio/wav", 
-                                    data = base64Audio
-                                } 
-                            }
+                            mimeType = "audio/pcm",
+                            data = base64Audio
                         }
                     }
                 }
             };
 
-            var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var json = JsonSerializer.Serialize(message);
+            var bytes = Encoding.UTF8.GetBytes(json);
 
-            var url = $"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={_apiKey}";
-
-            var response = await _httpClient.PostAsync(url, content, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
-            {
-                var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
-                var parsedResponse = ParseResponse(responseText);
-                Console.WriteLine($"🤖 Gemini: {parsedResponse}");
-                
-                // Notify UI
-                OnResponseReceived?.Invoke(parsedResponse);
-
-                // Clear buffer after successful send
-                _audioBuffer.SetLength(0);
-            }
-            else
-            {
-                var error = await response.Content.ReadAsStringAsync(cancellationToken);
-                Console.WriteLine($"⚠️ Gemini API error ({response.StatusCode}): {error}");
-            }
+            await _webSocket.SendAsync(
+                new ArraySegment<byte>(bytes),
+                WebSocketMessageType.Text,
+                true,
+                _cts.Token
+            );
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error sending to Gemini: {ex.Message}");
+            Console.WriteLine($"❌ Error streaming audio: {ex.Message}");
         }
     }
 
-    private byte[] CreateWavFile(byte[] audioData, WaveFormat waveFormat)
-    {
-        using var memStream = new MemoryStream();
-        using var writer = new System.IO.BinaryWriter(memStream);
-
-        // WAV file header
-        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-        writer.Write(36 + audioData.Length); // File size - 8
-        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
-
-        // fmt chunk
-        writer.Write(Encoding.ASCII.GetBytes("fmt "));
-        writer.Write(16); // fmt chunk size
-        writer.Write((short)1); // Audio format (1 = PCM)
-        writer.Write((short)waveFormat.Channels);
-        writer.Write(waveFormat.SampleRate);
-        writer.Write(waveFormat.AverageBytesPerSecond);
-        writer.Write((short)waveFormat.BlockAlign);
-        writer.Write((short)waveFormat.BitsPerSample);
-
-        // data chunk
-        writer.Write(Encoding.ASCII.GetBytes("data"));
-        writer.Write(audioData.Length);
-        writer.Write(audioData);
-
-        return memStream.ToArray();
-    }
-
-    private string ParseResponse(string jsonResponse)
+    private async Task SendSetupMessageAsync(WaveFormat waveFormat, CancellationToken ct)
     {
         try
         {
-            using var doc = JsonDocument.Parse(jsonResponse);
-            if (doc.RootElement.TryGetProperty("candidates", out var candidates) &&
-                candidates.GetArrayLength() > 0)
+            var setup = new
             {
-                var firstCandidate = candidates[0];
-                if (firstCandidate.TryGetProperty("content", out var content) &&
-                    content.TryGetProperty("parts", out var parts) &&
-                    parts.GetArrayLength() > 0)
+                setup = new
                 {
-                    var firstPart = parts[0];
-                    if (firstPart.TryGetProperty("text", out var text))
+                    model = "models/gemini-2.0-flash-exp",
+                    generationConfig = new
                     {
-                        return text.GetString() ?? "No response";
+                        responseModalities = "TEXT",
+                        speechConfig = new
+                        {
+                            voiceConfig = new { prebuiltVoiceConfig = new { voiceName = "Aoede" } }
+                        }
+                    },
+                    systemInstruction = new
+                    {
+                        parts = new[]
+                        {
+                            new { text = "You are transcribing an audio stream. Provide real-time transcription of speech. Return only the transcript text without any additional commentary." }
+                        }
                     }
                 }
+            };
+
+            var json = JsonSerializer.Serialize(setup);
+            var bytes = Encoding.UTF8.GetBytes(json);
+
+            await _webSocket!.SendAsync(
+                new ArraySegment<byte>(bytes),
+                WebSocketMessageType.Text,
+                true,
+                ct
+            );
+
+            Console.WriteLine("📤 Sent setup message to Gemini");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error sending setup: {ex.Message}");
+        }
+    }
+
+    private byte[] ConvertToPCM16(byte[] audioData, int offset, int count, WaveFormat sourceFormat)
+    {
+        // If already PCM16 at correct sample rate, return as-is
+        if (sourceFormat.Encoding == WaveFormatEncoding.Pcm && 
+            sourceFormat.BitsPerSample == 16 && 
+            sourceFormat.SampleRate == 16000)
+        {
+            var result = new byte[count];
+            Array.Copy(audioData, offset, result, 0, count);
+            return result;
+        }
+
+        try
+        {
+            // Convert to PCM16 16kHz mono
+            using var sourceStream = new RawSourceWaveStream(audioData, offset, count, sourceFormat);
+            var sampleProvider = sourceStream.ToSampleProvider();
+
+            // Resample to 16kHz if needed
+            if (sourceFormat.SampleRate != 16000)
+            {
+                sampleProvider = new WdlResamplingSampleProvider(sampleProvider, 16000);
+            }
+
+            // Convert to mono if stereo
+            if (sampleProvider.WaveFormat.Channels > 1)
+            {
+                sampleProvider = sampleProvider.ToMono();
+            }
+
+            // Convert to 16-bit PCM
+            var pcm16Provider = new SampleToWaveProvider16(sampleProvider);
+
+            using var outputStream = new MemoryStream();
+            var buffer = new byte[16000 * 2]; // 1 second buffer
+            int bytesRead;
+
+            while ((bytesRead = pcm16Provider.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                outputStream.Write(buffer, 0, bytesRead);
+            }
+
+            return outputStream.ToArray();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️ Error converting audio format: {ex.Message}");
+            // Return original data as fallback
+            var fallback = new byte[count];
+            Array.Copy(audioData, offset, fallback, 0, count);
+            return fallback;
+        }
+    }
+
+    private async Task ReceiveMessagesAsync(CancellationToken ct)
+    {
+        var buffer = new byte[1024 * 64]; // 64KB receive buffer
+
+        try
+        {
+            while (_webSocket != null && _webSocket.State == WebSocketState.Open && !ct.IsCancellationRequested)
+            {
+                using var ms = new MemoryStream();
+                WebSocketReceiveResult result;
+
+                do
+                {
+                    result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+                    ms.Write(buffer, 0, result.Count);
+                } while (!result.EndOfMessage);
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    Console.WriteLine("🔌 WebSocket closed by server");
+                    break;
+                }
+
+                ms.Seek(0, SeekOrigin.Begin);
+                var json = Encoding.UTF8.GetString(ms.ToArray());
+
+                ProcessResponse(json);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine("🛑 Receive task cancelled");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error receiving messages: {ex.Message}");
+        }
+    }
+
+    private void ProcessResponse(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+
+            // Handle serverContent responses (transcription)
+            if (doc.RootElement.TryGetProperty("serverContent", out var serverContent))
+            {
+                if (serverContent.TryGetProperty("modelTurn", out var modelTurn) &&
+                    modelTurn.TryGetProperty("parts", out var parts))
+                {
+                    foreach (var part in parts.EnumerateArray())
+                    {
+                        if (part.TryGetProperty("text", out var text))
+                        {
+                            var transcript = text.GetString();
+                            if (!string.IsNullOrWhiteSpace(transcript))
+                            {
+                                Console.WriteLine($"📝 Transcript: {transcript}");
+                                OnResponseReceived?.Invoke(transcript);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Handle setupComplete confirmation
+            if (doc.RootElement.TryGetProperty("setupComplete", out _))
+            {
+                Console.WriteLine("✅ Gemini setup complete, ready to receive audio");
+            }
+
+            // Handle errors
+            if (doc.RootElement.TryGetProperty("error", out var error))
+            {
+                Console.WriteLine($"❌ Gemini error: {error.GetRawText()}");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"⚠️ Error parsing response: {ex.Message}");
+            Console.WriteLine($"⚠️ Error processing response: {ex.Message}");
+            Console.WriteLine($"Raw JSON: {json}");
         }
-
-        return jsonResponse;
     }
 
     public async Task ProcessAudioFileAsync(string filePath)
@@ -340,22 +453,74 @@ public class GeminiAudioStreamer : IDisposable
         }
     }
 
+    private string ParseResponse(string jsonResponse)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonResponse);
+            if (doc.RootElement.TryGetProperty("candidates", out var candidates) &&
+                candidates.GetArrayLength() > 0)
+            {
+                var firstCandidate = candidates[0];
+                if (firstCandidate.TryGetProperty("content", out var content) &&
+                    content.TryGetProperty("parts", out var parts) &&
+                    parts.GetArrayLength() > 0)
+                {
+                    var firstPart = parts[0];
+                    if (firstPart.TryGetProperty("text", out var text))
+                    {
+                        return text.GetString() ?? "No response";
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️ Error parsing response: {ex.Message}");
+        }
+
+        return jsonResponse;
+    }
+
     public async Task DisconnectAsync()
     {
         _isConnected = false;
 
-        // Send any remaining buffered audio
-        if (_audioBuffer.Length > 0 && _cts != null)
+        try
         {
-            // Need wave format - this is a limitation, will be passed from Program.cs
-            Console.WriteLine("⚠️ Flushing remaining audio...");
+            // Cancel operations
+            _cts?.Cancel();
+
+            // Wait for receive task to complete
+            if (_receiveTask != null)
+            {
+                await Task.WhenAny(_receiveTask, Task.Delay(2000));
+            }
+
+            // Close WebSocket gracefully
+            if (_webSocket != null && _webSocket.State == WebSocketState.Open)
+            {
+                await _webSocket.CloseAsync(
+                    WebSocketCloseStatus.NormalClosure,
+                    "Client disconnecting",
+                    CancellationToken.None
+                );
+            }
+
+            _webSocket?.Dispose();
+            _webSocket = null;
+
+            Console.WriteLine("🔌 Disconnected from Gemini");
         }
-
-        _cts?.Cancel();
-        _cts?.Dispose();
-        _audioBuffer?.Dispose();
-
-        Console.WriteLine("🔌 Disconnected from Gemini");
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️ Error during disconnect: {ex.Message}");
+        }
+        finally
+        {
+            _cts?.Dispose();
+            _cts = null;
+        }
     }
 
     public void Dispose()
