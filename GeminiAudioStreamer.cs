@@ -519,17 +519,20 @@ public class GeminiAudioStreamer : IDisposable
     {
         if (!_isConnected)
         {
-            Console.WriteLine("⚠️ Not connected to Gemini");
+            Log("⚠️ GetAnswerForQuestionAsync called but not connected to Gemini");
             return null;
         }
 
         if (string.IsNullOrWhiteSpace(question))
         {
+            Log("⚠️ GetAnswerForQuestionAsync called with empty question");
             return null;
         }
 
         try
         {
+            Log($"❓ Processing question: {question}");
+
             var tokenToUse = cancellationToken == default && _cts != null
                 ? _cts.Token
                 : cancellationToken;
@@ -544,7 +547,7 @@ public class GeminiAudioStreamer : IDisposable
                         {
                             new
                             {
-                                text = $"Answer this question from a live transcript. Be brief and direct. If the transcript does not provide enough context, say you are not sure.\n\nQuestion: {question}"
+                                text = $"Answer this question briefly and directly:\n\nQuestion: {question}"
                             }
                         }
                     }
@@ -555,21 +558,26 @@ public class GeminiAudioStreamer : IDisposable
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var url = $"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={_apiKey}";
+
+            Log($"🌐 Sending Q&A request to Gemini...");
             var response = await _httpClient.PostAsync(url, content, tokenToUse);
 
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync(tokenToUse);
-                Console.WriteLine($"⚠️ Gemini QA API error ({response.StatusCode}): {error}");
+                Log($"❌ Gemini QA API error ({response.StatusCode}): {error}");
                 return null;
             }
 
             var responseText = await response.Content.ReadAsStringAsync(tokenToUse);
-            return ParseResponse(responseText);
+            var answer = ParseResponse(responseText);
+
+            Log($"✅ Got answer: {answer}");
+            return answer;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error getting answer from Gemini: {ex.Message}");
+            Log($"❌ Error getting answer from Gemini: {ex.Message}");
             return null;
         }
     }

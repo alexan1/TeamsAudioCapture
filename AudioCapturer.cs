@@ -184,8 +184,8 @@ public class AudioCapturer
             _systemCapture.StartRecording();
             _micCapture?.StartRecording();
 
-            // Start mixer timer if microphone is enabled
-            if (_captureMicrophone && _systemBuffer != null && _micBuffer != null && _targetFormat != null)
+            // Start mixer timer only if ALL buffers are properly initialized
+            if (_micCapture != null && _systemBuffer != null && _micBuffer != null && _targetFormat != null)
             {
                 _mixerTimer = new System.Threading.Timer(MixAudio, null, 50, 20); // Mix every 20ms
             }

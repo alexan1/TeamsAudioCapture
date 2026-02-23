@@ -221,19 +221,28 @@ public partial class MainWindow : Window
         var question = ExtractQuestion(transcriptChunk);
         if (string.IsNullOrWhiteSpace(question))
         {
+            Console.WriteLine($"🔍 No question detected in: {transcriptChunk.Substring(0, Math.Min(50, transcriptChunk.Length))}...");
             return;
         }
+
+        Console.WriteLine($"❓ Question detected: {question}");
 
         if (!_answeredQuestions.Add(question))
         {
+            Console.WriteLine($"⏭️ Question already answered: {question}");
             return;
         }
 
+        Console.WriteLine($"🤖 Getting answer for: {question}");
         var answer = await _geminiStreamer.GetAnswerForQuestionAsync(question);
+
         if (string.IsNullOrWhiteSpace(answer))
         {
+            Console.WriteLine($"⚠️ No answer received for: {question}");
             return;
         }
+
+        Console.WriteLine($"✅ Answer received: {answer}");
 
         await Dispatcher.InvokeAsync(() =>
         {
@@ -315,11 +324,16 @@ public partial class MainWindow : Window
 
                         _geminiStreamer.OnResponseReceived += (response) =>
                         {
+                            Console.WriteLine($"📥 Response received: {response}");
+
                             var delta = GetTranscriptDelta(response);
                             if (string.IsNullOrWhiteSpace(delta))
                             {
+                                Console.WriteLine("   ⏭️ No delta (duplicate or partial)");
                                 return;
                             }
+
+                            Console.WriteLine($"   ➕ Delta: {delta}");
 
                             if (_showTranscript)
                             {
@@ -329,6 +343,7 @@ public partial class MainWindow : Window
                                 });
                             }
 
+                            Console.WriteLine($"   🔍 Checking for questions in full transcript...");
                             _ = TryAnswerQuestionAsync(response);
                         };
 
