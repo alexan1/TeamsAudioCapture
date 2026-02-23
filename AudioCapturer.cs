@@ -147,6 +147,11 @@ public class AudioCapturer
                         {
                             _systemBuffer.AddSamples(converted, 0, converted.Length);
                         }
+
+                        if (_geminiStreamer != null)
+                        {
+                            await _geminiStreamer.StreamAudioAsync(e.Buffer, 0, bytesRecorded, waveFormat);
+                        }
                     }
                     else
                     {
@@ -345,11 +350,6 @@ public class AudioCapturer
                 _writer.Write(mixedData, 0, chunkSize);
                 _totalBytesRecorded += chunkSize;
                 OnDataRecorded?.Invoke(_totalBytesRecorded);
-
-                if (_geminiStreamer != null)
-                {
-                    _ = _geminiStreamer.StreamAudioAsync(mixedData, 0, chunkSize, _targetFormat);
-                }
             }
             catch (Exception ex)
             {
