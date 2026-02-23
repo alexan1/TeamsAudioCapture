@@ -11,7 +11,7 @@ using NAudio.Wave.SampleProviders;
 
 public class GeminiAudioStreamer : IDisposable
 {
-    private const string DefaultLiveModel = "models/gemini-2.0-flash-live-001";
+    private const string DefaultLiveModel = "models/gemini-2.5-flash-native-audio-preview-12-2025";
     private readonly string _apiKey;
     private readonly HttpClient _httpClient;
     private ClientWebSocket? _webSocket;
@@ -20,6 +20,11 @@ public class GeminiAudioStreamer : IDisposable
     private Task? _receiveTask;
     private WaveFormat? _currentWaveFormat;
     private TaskCompletionSource<bool>? _setupCompletionSource;
+    private DateTime _lastTranscriptionTime;
+    private bool _liveConnectFailed;
+    private static readonly string LogFilePath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
+
+    public string? LastServerError { get; private set; }
 
     public event Action<string>? OnResponseReceived;
 
@@ -28,6 +33,21 @@ public class GeminiAudioStreamer : IDisposable
         ArgumentNullException.ThrowIfNull(apiKey);
         _apiKey = apiKey;
         _httpClient = new HttpClient();
+
+        // Clear log file
+        File.WriteAllText(LogFilePath, $"=== Gemini Debug Log Started at {DateTime.Now} ===\n");
+        Log($"Log file location: {LogFilePath}");
+    }
+
+    private void Log(string message)
+    {
+        var logMessage = $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n";
+        Console.WriteLine(message);
+        try
+        {
+            File.AppendAllText(LogFilePath, logMessage);
+        }
+        catch { /* Ignore log errors */ }
     }
 
     public async Task ConnectAsync()
@@ -35,18 +55,18 @@ public class GeminiAudioStreamer : IDisposable
         try
         {
             // First, test if API key works with regular API
-            Console.WriteLine("🔑 Testing API key with regular Gemini API first...");
+            Log("🔑 Testing API key with regular Gemini API first...");
             var testUrl = $"https://generativelanguage.googleapis.com/v1/models?key={_apiKey}";
             var testResponse = await _httpClient.GetAsync(testUrl);
             if (testResponse.IsSuccessStatusCode)
             {
-                Console.WriteLine("✅ API key is valid for regular Gemini API");
+                Log("✅ API key is valid for regular Gemini API");
             }
             else
             {
                 var error = await testResponse.Content.ReadAsStringAsync();
-                Console.WriteLine($"❌ API key test failed: {testResponse.StatusCode}");
-                Console.WriteLine($"   Error: {error}");
+                Log($"❌ API key test failed: {testResponse.StatusCode}");
+                Log($"   Error: {error}");
             }
 
             _cts = new CancellationTokenSource();
@@ -56,21 +76,21 @@ public class GeminiAudioStreamer : IDisposable
             // Connect to Gemini Live API
             var uri = new Uri($"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={_apiKey}");
 
-            Console.WriteLine("🌐 Connecting to Gemini Live API (v1alpha - early access)...");
+            Log("🌐 Connecting to Gemini Live API (v1alpha - early access)...");
             await _webSocket.ConnectAsync(uri, _cts.Token);
 
             _isConnected = true;
-            Console.WriteLine("✅ Connected to Gemini Live API");
+            Log("✅ Connected to Gemini Live API");
 
             // Start receiving messages
             _receiveTask = Task.Run(() => ReceiveMessagesAsync(_cts.Token), _cts.Token);
 
             await SendSetupMessageAsync(_cts.Token);
-            Console.WriteLine("⏳ Setup sent; waiting for live responses...");
+            Log("⏳ Setup sent; waiting for live responses...");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Failed to connect to Gemini: {ex.Message}");
+            Log($"❌ Failed to connect to Gemini: {ex.Message}");
             _isConnected = false;
             throw;
         }
@@ -128,7 +148,7 @@ public class GeminiAudioStreamer : IDisposable
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error streaming audio: {ex.Message}");
+            Log($"❌ Error streaming audio: {ex.Message}");
         }
     }
 
@@ -145,20 +165,20 @@ public class GeminiAudioStreamer : IDisposable
             return;
         }
 
-        Console.WriteLine("⏳ Waiting for setup completion...");
+        Log("⏳ Waiting for setup completion...");
         try
         {
             await _setupCompletionSource.Task.WaitAsync(cancellationToken);
-            Console.WriteLine("✅ Setup wait completed successfully");
+            Log("✅ Setup wait completed successfully");
         }
         catch (OperationCanceledException)
         {
-            Console.WriteLine("❌ Setup wait was canceled or timed out");
+            Log("❌ Setup wait was canceled or timed out");
             throw;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Setup wait failed: {ex.Message}");
+            Log($"❌ Setup wait failed: {ex.Message}");
             throw;
         }
     }
@@ -174,13 +194,13 @@ public class GeminiAudioStreamer : IDisposable
                     model = DefaultLiveModel,
                     generationConfig = new
                     {
-                        responseModalities = new[] { "TEXT" }
+                        responseModalities = new[] { "AUDIO" }
                     },
                     systemInstruction = new
                     {
                         parts = new[]
                         {
-                            new { text = "You are transcribing an audio stream. Provide real-time transcription of speech. Return only the transcript text without any additional commentary." }
+                            new { text = "Listen to the user and do not speak" }
                         }
                     }
                 }
@@ -189,6 +209,8 @@ public class GeminiAudioStreamer : IDisposable
             var json = JsonSerializer.Serialize(setup);
             var bytes = Encoding.UTF8.GetBytes(json);
 
+            Log($"📤 Sending setup message: {json}");
+
             await _webSocket!.SendAsync(
                 new ArraySegment<byte>(bytes),
                 WebSocketMessageType.Text,
@@ -196,11 +218,11 @@ public class GeminiAudioStreamer : IDisposable
                 ct
             );
 
-            Console.WriteLine("📤 Sent setup message to Gemini");
+            Log("✅ Setup message sent successfully");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error sending setup: {ex.Message}");
+            Log($"❌ Error sending setup: {ex.Message}");
             _setupCompletionSource?.TrySetException(ex);
             throw;
         }
@@ -252,7 +274,7 @@ public class GeminiAudioStreamer : IDisposable
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"⚠️ Error converting audio format: {ex.Message}");
+            Log($"⚠️ Error converting audio format: {ex.Message}");
             // Return original data as fallback
             var fallback = new byte[count];
             Array.Copy(audioData, offset, fallback, 0, count);
@@ -279,19 +301,21 @@ public class GeminiAudioStreamer : IDisposable
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    Console.WriteLine("🔌 WebSocket closed by server");
+                    Log("🔌 WebSocket closed by server");
+                    Log($"Close status: {result.CloseStatus}, Description: {result.CloseStatusDescription}");
                     break;
                 }
 
                 ms.Seek(0, SeekOrigin.Begin);
                 var json = Encoding.UTF8.GetString(ms.ToArray());
 
+                Log($"📨 Raw message received: {json}");
                 ProcessResponse(json);
             }
         }
         catch (OperationCanceledException)
         {
-            Console.WriteLine("🛑 Receive task cancelled");
+            Log("🛑 Receive task cancelled");
             if (_isConnected)
             {
                 _setupCompletionSource?.TrySetCanceled();
@@ -299,7 +323,7 @@ public class GeminiAudioStreamer : IDisposable
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Error receiving messages: {ex.Message}");
+            Log($"❌ Error receiving messages: {ex.Message}");
             _setupCompletionSource?.TrySetException(ex);
         }
     }
@@ -310,9 +334,32 @@ public class GeminiAudioStreamer : IDisposable
         {
             using var doc = JsonDocument.Parse(json);
 
-            // Handle serverContent responses (transcription)
+            // Handle setupComplete confirmation
+            if (doc.RootElement.TryGetProperty("setupComplete", out _))
+            {
+                Log("✅ Gemini setup complete, ready to receive audio");
+                _setupCompletionSource?.TrySetResult(true);
+            }
+
+            // Handle input_transcription (real-time user speech transcription from native-audio model)
             if (doc.RootElement.TryGetProperty("serverContent", out var serverContent))
             {
+                // Check for input_transcription (user's speech being transcribed)
+                if (serverContent.TryGetProperty("inputTranscription", out var inputTranscription))
+                {
+                    if (inputTranscription.TryGetProperty("text", out var text))
+                    {
+                        var transcript = text.GetString();
+                        if (!string.IsNullOrWhiteSpace(transcript))
+                        {
+                            Log($"📝 Input Transcript: {transcript}");
+                            _lastTranscriptionTime = DateTime.UtcNow;
+                            OnResponseReceived?.Invoke(transcript);
+                        }
+                    }
+                }
+
+                // Also handle modelTurn for backward compatibility (though native-audio uses inputTranscription)
                 if (serverContent.TryGetProperty("modelTurn", out var modelTurn) &&
                     modelTurn.TryGetProperty("parts", out var parts))
                 {
@@ -323,40 +370,44 @@ public class GeminiAudioStreamer : IDisposable
                             var transcript = text.GetString();
                             if (!string.IsNullOrWhiteSpace(transcript))
                             {
-                                Console.WriteLine($"📝 Transcript: {transcript}");
+                                Log($"📝 Model Turn: {transcript}");
+                                _lastTranscriptionTime = DateTime.UtcNow;
                                 OnResponseReceived?.Invoke(transcript);
                             }
                         }
                     }
                 }
-            }
 
-            // Handle setupComplete confirmation
-            if (doc.RootElement.TryGetProperty("setupComplete", out _))
-            {
-                Console.WriteLine("✅ Gemini setup complete, ready to receive audio");
-                _setupCompletionSource?.TrySetResult(true);
+                // Handle turn_complete signal (settle-based completion will also trigger on 1.5s silence)
+                if (serverContent.TryGetProperty("turnComplete", out var turnComplete) && 
+                    turnComplete.GetBoolean())
+                {
+                    Log("✅ Turn complete signal received");
+                }
             }
 
             // Handle errors
             if (doc.RootElement.TryGetProperty("error", out var error))
             {
                 var errorMessage = error.GetRawText();
-                Console.WriteLine($"❌ Gemini error: {errorMessage}");
+                LastServerError = errorMessage;
+                Log($"❌ Gemini error: {errorMessage}");
                 _setupCompletionSource?.TrySetException(new InvalidOperationException($"Gemini Live API error: {errorMessage}"));
+                _liveConnectFailed = true;
             }
 
+            // Log unknown message types for debugging
             if (!doc.RootElement.TryGetProperty("serverContent", out _) &&
                 !doc.RootElement.TryGetProperty("setupComplete", out _) &&
                 !doc.RootElement.TryGetProperty("error", out _))
             {
-                Console.WriteLine($"ℹ️ Gemini message: {json}");
+                Log($"ℹ️ Gemini message: {json}");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"⚠️ Error processing response: {ex.Message}");
-            Console.WriteLine($"Raw JSON: {json}");
+            Log($"⚠️ Error processing response: {ex.Message}");
+            Log($"Raw JSON: {json}");
         }
     }
 
@@ -602,6 +653,9 @@ public class GeminiAudioStreamer : IDisposable
         _httpClient?.Dispose();
     }
 }
+
+
+
 
 
 

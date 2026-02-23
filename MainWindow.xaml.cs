@@ -337,11 +337,21 @@ public partial class MainWindow : Window
                     }
                     catch (Exception ex)
                     {
+                        var serverError = _geminiStreamer?.LastServerError;
+                        var logPath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
                         _geminiStreamer = null;
 
                         var errorDetails = ex is TaskCanceledException or OperationCanceledException
                             ? "Setup timed out after 10 seconds. The Gemini API may be unavailable or slow to respond."
                             : ex.Message;
+
+                        // If we have a server error, show it
+                        if (!string.IsNullOrWhiteSpace(serverError))
+                        {
+                            errorDetails = $"Server Error:\n{serverError}\n\nOriginal Exception: {errorDetails}";
+                        }
+
+                        errorDetails += $"\n\nDebug log: {logPath}";
 
                         if (!saveAudio)
                         {
