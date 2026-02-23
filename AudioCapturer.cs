@@ -133,21 +133,30 @@ public class AudioCapturer
             {
                 try
                 {
+                    var bytesRecorded = GetSafeBytesRecorded(e.Buffer, e.BytesRecorded, waveFormat);
+                    if (bytesRecorded <= 0)
+                    {
+                        return;
+                    }
+
                     if (_captureMicrophone && _systemBuffer != null && _targetFormat != null)
                     {
                         // Convert and add to buffer
-                        var converted = ConvertAudioFormat(e.Buffer, e.BytesRecorded, waveFormat, _targetFormat);
-                        _systemBuffer.AddSamples(converted, 0, converted.Length);
+                        var converted = ConvertAudioFormat(e.Buffer, bytesRecorded, waveFormat, _targetFormat);
+                        if (converted.Length > 0)
+                        {
+                            _systemBuffer.AddSamples(converted, 0, converted.Length);
+                        }
                     }
                     else
                     {
-                        _writer?.Write(e.Buffer, 0, e.BytesRecorded);
-                        _totalBytesRecorded += e.BytesRecorded;
+                        _writer?.Write(e.Buffer, 0, bytesRecorded);
+                        _totalBytesRecorded += bytesRecorded;
                         OnDataRecorded?.Invoke(_totalBytesRecorded);
 
                         if (_geminiStreamer != null)
                         {
-                            await _geminiStreamer.StreamAudioAsync(e.Buffer, 0, e.BytesRecorded, waveFormat);
+                            await _geminiStreamer.StreamAudioAsync(e.Buffer, 0, bytesRecorded, waveFormat);
                         }
                     }
                 }
@@ -164,9 +173,18 @@ public class AudioCapturer
                 {
                     try
                     {
+                        var bytesRecorded = GetSafeBytesRecorded(e.Buffer, e.BytesRecorded, _micCapture.WaveFormat);
+                        if (bytesRecorded <= 0)
+                        {
+                            return;
+                        }
+
                         // Convert and add to buffer
-                        var converted = ConvertAudioFormat(e.Buffer, e.BytesRecorded, _micCapture.WaveFormat, _targetFormat);
-                        _micBuffer.AddSamples(converted, 0, converted.Length);
+                        var converted = ConvertAudioFormat(e.Buffer, bytesRecorded, _micCapture.WaveFormat, _targetFormat);
+                        if (converted.Length > 0)
+                        {
+                            _micBuffer.AddSamples(converted, 0, converted.Length);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -222,7 +240,13 @@ public class AudioCapturer
 
     private byte[] ConvertAudioFormat(byte[] input, int length, WaveFormat sourceFormat, WaveFormat targetFormat)
     {
-        using var sourceStream = new RawSourceWaveStream(input, 0, length, sourceFormat);
+        var safeLength = GetSafeBytesRecorded(input, length, sourceFormat);
+        if (safeLength <= 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        using var sourceStream = new RawSourceWaveStream(input, 0, safeLength, sourceFormat);
         var sampleProvider = sourceStream.ToSampleProvider();
 
         // Resample if needed
@@ -243,12 +267,36 @@ public class AudioCapturer
 
         // Convert to target format
         var converted = new SampleToWaveProvider16(sampleProvider);
-        var outputBuffer = new byte[length * 2]; // Rough estimate
+        var estimatedOutputBytes = (int)Math.Ceiling((double)safeLength * targetFormat.AverageBytesPerSecond / sourceFormat.AverageBytesPerSecond) + targetFormat.BlockAlign;
+        if (targetFormat.BlockAlign > 0)
+        {
+            estimatedOutputBytes -= estimatedOutputBytes % targetFormat.BlockAlign;
+        }
+
+        if (estimatedOutputBytes <= 0)
+        {
+            estimatedOutputBytes = targetFormat.BlockAlign > 0 ? targetFormat.BlockAlign : 2;
+        }
+
+        var outputBuffer = new byte[estimatedOutputBytes];
         int bytesRead = converted.Read(outputBuffer, 0, outputBuffer.Length);
 
         var result = new byte[bytesRead];
         Array.Copy(outputBuffer, result, bytesRead);
         return result;
+    }
+
+    private static int GetSafeBytesRecorded(byte[]? buffer, int requestedLength, WaveFormat format)
+    {
+        if (buffer == null || requestedLength <= 0)
+        {
+            return 0;
+        }
+
+        var safeLength = Math.Min(requestedLength, buffer.Length);
+        var blockAlign = Math.Max(1, format.BlockAlign);
+        safeLength -= safeLength % blockAlign;
+        return safeLength;
     }
 
     private void MixAudio(object? state)
@@ -266,6 +314,10 @@ public class AudioCapturer
                     return;
 
                 var chunkSize = Math.Min(available, _targetFormat.AverageBytesPerSecond / 20); // Max 50ms chunks
+                chunkSize -= chunkSize % Math.Max(1, _targetFormat.BlockAlign);
+                if (chunkSize <= 0)
+                    return;
+
                 var systemData = new byte[chunkSize];
                 var micData = new byte[chunkSize];
                 var mixedData = new byte[chunkSize];
