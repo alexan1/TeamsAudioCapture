@@ -214,14 +214,12 @@ public partial class MainWindow : Window
     private async System.Threading.Tasks.Task TryAnswerQuestionAsync(string transcriptChunk)
     {
         if (_geminiStreamer == null)
-        {
             return;
-        }
 
         var question = ExtractQuestion(transcriptChunk);
         if (string.IsNullOrWhiteSpace(question))
         {
-            Console.WriteLine($"🔍 No question detected in: {transcriptChunk.Substring(0, Math.Min(50, transcriptChunk.Length))}...");
+            Console.WriteLine($"🔍 No question detected in: {transcriptChunk[..Math.Min(50, transcriptChunk.Length)]}...");
             return;
         }
 
@@ -233,22 +231,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        Console.WriteLine($"🤖 Getting answer for: {question}");
-        var answer = await _geminiStreamer.GetAnswerForQuestionAsync(question);
-
-        if (string.IsNullOrWhiteSpace(answer))
-        {
-            Console.WriteLine($"⚠️ No answer received for: {question}");
-            return;
-        }
-
-        Console.WriteLine($"✅ Answer received: {answer}");
-
+        // Show question header immediately — no waiting for the answer
         await Dispatcher.InvokeAsync(() =>
         {
             EnsureAnswerWindow();
-            _answerWindow?.AppendAnswer(question, answer);
+            _answerWindow?.StartNewAnswer(question);
         });
+
+        // Stream answer tokens as they arrive
+        await _geminiStreamer.StreamAnswerForQuestionAsync(question, chunk =>
+        {
+            Dispatcher.Invoke(() => _answerWindow?.AppendToLastAnswer(chunk));
+        });
+
+        await Dispatcher.InvokeAsync(() => _answerWindow?.FinalizeLastAnswer());
     }
 
     private void EnsureAnswerWindow()

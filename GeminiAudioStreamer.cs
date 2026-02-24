@@ -517,6 +517,85 @@ public class GeminiAudioStreamer : IDisposable
         }
     }
 
+    public async Task StreamAnswerForQuestionAsync(string question, Action<string> onChunk, CancellationToken cancellationToken = default)
+    {
+        if (!_isConnected || string.IsNullOrWhiteSpace(question))
+            return;
+
+        var tokenToUse = cancellationToken == default && _cts != null ? _cts.Token : cancellationToken;
+
+        try
+        {
+            Log($"❓ Streaming answer for: {question}");
+
+            var payload = new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        parts = new object[]
+                        {
+                            new { text = $"Answer this question briefly and directly:\n\nQuestion: {question}" }
+                        }
+                    }
+                }
+            };
+
+            var json = JsonSerializer.Serialize(payload);
+            using var request = new HttpRequestMessage(HttpMethod.Post,
+                $"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key={_apiKey}")
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, tokenToUse);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(tokenToUse);
+                Log($"❌ Gemini streaming QA error ({response.StatusCode}): {error}");
+                return;
+            }
+
+            using var stream = await response.Content.ReadAsStreamAsync(tokenToUse);
+            using var reader = new StreamReader(stream);
+
+            while (!reader.EndOfStream && !tokenToUse.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(tokenToUse);
+                if (string.IsNullOrEmpty(line) || !line.StartsWith("data: "))
+                    continue;
+
+                var data = line["data: ".Length..];
+                if (data == "[DONE]")
+                    break;
+
+                try
+                {
+                    using var doc = JsonDocument.Parse(data);
+                    if (doc.RootElement.TryGetProperty("candidates", out var candidates)
+                        && candidates.GetArrayLength() > 0
+                        && candidates[0].TryGetProperty("content", out var candidateContent)
+                        && candidateContent.TryGetProperty("parts", out var parts)
+                        && parts.GetArrayLength() > 0
+                        && parts[0].TryGetProperty("text", out var text))
+                    {
+                        var chunk = text.GetString();
+                        if (!string.IsNullOrEmpty(chunk))
+                            onChunk(chunk);
+                    }
+                }
+                catch { /* skip malformed SSE chunks */ }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Log($"❌ Error streaming answer: {ex.Message}");
+        }
+    }
+
     public async Task<string?> GetAnswerForQuestionAsync(string question, CancellationToken cancellationToken = default)
     {
         if (!_isConnected)
