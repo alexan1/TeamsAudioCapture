@@ -27,6 +27,7 @@ public class GeminiAudioStreamer : IDisposable
     public string? LastServerError { get; private set; }
 
     public event Action<string>? OnResponseReceived;
+    public event Action<string>? OnInputTranscriptReceived;
 
     public GeminiAudioStreamer(string apiKey)
     {
@@ -196,6 +197,7 @@ public class GeminiAudioStreamer : IDisposable
                     {
                         responseModalities = new[] { "AUDIO" }
                     },
+                    inputAudioTranscription = new { },
                     systemInstruction = new
                     {
                         parts = new[]
@@ -344,7 +346,7 @@ public class GeminiAudioStreamer : IDisposable
             // Handle input_transcription (real-time user speech transcription from native-audio model)
             if (doc.RootElement.TryGetProperty("serverContent", out var serverContent))
             {
-                // Check for input_transcription (user's speech being transcribed)
+                // Check for input_transcription (verbatim user speech from inputAudioTranscription config)
                 if (serverContent.TryGetProperty("inputTranscription", out var inputTranscription))
                 {
                     if (inputTranscription.TryGetProperty("text", out var text))
@@ -354,7 +356,7 @@ public class GeminiAudioStreamer : IDisposable
                         {
                             Log($"📝 Input Transcript: {transcript}");
                             _lastTranscriptionTime = DateTime.UtcNow;
-                            OnResponseReceived?.Invoke(transcript);
+                            OnInputTranscriptReceived?.Invoke(transcript);
                         }
                     }
                 }

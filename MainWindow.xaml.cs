@@ -322,29 +322,21 @@ public partial class MainWindow : Window
 
                         EnsureAnswerWindow();
 
+                        // Model review/response - show in transcript window
                         _geminiStreamer.OnResponseReceived += (response) =>
                         {
-                            Console.WriteLine($"📥 Response received: {response}");
-
-                            var delta = GetTranscriptDelta(response);
-                            if (string.IsNullOrWhiteSpace(delta))
-                            {
-                                Console.WriteLine("   ⏭️ No delta (duplicate or partial)");
-                                return;
-                            }
-
-                            Console.WriteLine($"   ➕ Delta: {delta}");
-
+                            Console.WriteLine($"📥 Model response: {response}");
                             if (_showTranscript)
                             {
-                                Dispatcher.Invoke(() =>
-                                {
-                                    AppendGeminiResponseText(delta);
-                                });
+                                Dispatcher.Invoke(() => AppendGeminiResponseText(response));
                             }
+                        };
 
-                            Console.WriteLine($"   🔍 Checking for questions in full transcript...");
-                            _ = TryAnswerQuestionAsync(response);
+                        // Verbatim speech transcription - use for question detection
+                        _geminiStreamer.OnInputTranscriptReceived += (transcript) =>
+                        {
+                            Console.WriteLine($"📝 Speech transcribed: {transcript}");
+                            _ = TryAnswerQuestionAsync(transcript);
                         };
 
                         GeminiStatusText.Text = "(Connected)";
@@ -576,21 +568,15 @@ public partial class MainWindow : Window
 
                 _geminiStreamer.OnResponseReceived += (response) =>
                 {
-                    var delta = GetTranscriptDelta(response);
-                    if (string.IsNullOrWhiteSpace(delta))
-                    {
-                        return;
-                    }
-
                     if (_showTranscript)
                     {
-                        Dispatcher.Invoke(() =>
-                        {
-                            AppendGeminiResponseText(delta);
-                        });
+                        Dispatcher.Invoke(() => AppendGeminiResponseText(response));
                     }
+                };
 
-                    _ = TryAnswerQuestionAsync(response);
+                _geminiStreamer.OnInputTranscriptReceived += (transcript) =>
+                {
+                    _ = TryAnswerQuestionAsync(transcript);
                 };
                 _lastTranscriptChunk = string.Empty;
                 // Process the file
