@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.Configuration;
@@ -18,6 +19,9 @@ public partial class MainWindow : Window
     private bool _showTranscript;
     private readonly HashSet<string> _answeredQuestions = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _transcriptLock = new();
+    private readonly object _sessionTextLock = new();
+    private readonly StringBuilder _sessionTranscript = new();
+    private readonly StringBuilder _sessionQna = new();
     private string _lastTranscriptChunk = string.Empty;
     private DispatcherTimer _recordingTimer;
     private DateTime _recordingStartTime;
@@ -238,13 +242,60 @@ public partial class MainWindow : Window
             _answerWindow?.StartNewAnswer(question);
         });
 
+        var answerBuffer = new StringBuilder();
+
         // Stream answer tokens as they arrive
         await _geminiStreamer.StreamAnswerForQuestionAsync(question, chunk =>
         {
+            lock (answerBuffer)
+            {
+                answerBuffer.Append(chunk);
+            }
             Dispatcher.Invoke(() => _answerWindow?.AppendToLastAnswer(chunk));
         });
 
         await Dispatcher.InvokeAsync(() => _answerWindow?.FinalizeLastAnswer());
+
+        string finalAnswer;
+        lock (answerBuffer)
+        {
+            finalAnswer = answerBuffer.ToString().Trim();
+        }
+
+        lock (_sessionTextLock)
+        {
+            _sessionQna.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Q: {question}");
+            _sessionQna.AppendLine($"A: {finalAnswer}");
+            _sessionQna.AppendLine();
+        }
+    }
+
+    private (string transcriptPath, string qnaPath) SaveSessionTextFiles(string audioFilePath)
+    {
+        var folder = Path.GetDirectoryName(audioFilePath) ?? Directory.GetCurrentDirectory();
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(audioFilePath);
+        var transcriptPath = Path.Combine(folder, $"{fileNameWithoutExtension}_transcript.txt");
+        var qnaPath = Path.Combine(folder, $"{fileNameWithoutExtension}_qa.txt");
+
+        Directory.CreateDirectory(folder);
+
+        string transcriptText;
+        string qnaText;
+        lock (_sessionTextLock)
+        {
+            transcriptText = _sessionTranscript.Length == 0
+                ? "No transcript captured during this recording."
+                : _sessionTranscript.ToString().Trim();
+
+            qnaText = _sessionQna.Length == 0
+                ? "No questions were detected/answered during this recording."
+                : _sessionQna.ToString().Trim();
+        }
+
+        File.WriteAllText(transcriptPath, transcriptText);
+        File.WriteAllText(qnaPath, qnaText);
+
+        return (transcriptPath, qnaPath);
     }
 
     private void EnsureAnswerWindow()
@@ -341,6 +392,12 @@ public partial class MainWindow : Window
                         _geminiStreamer.OnTurnComplete += (fullSentence) =>
                         {
                             Console.WriteLine($"📝 Full sentence: {fullSentence}");
+
+                            lock (_sessionTextLock)
+                            {
+                                _sessionTranscript.AppendLine(fullSentence);
+                            }
+
                             _ = TryAnswerQuestionAsync(fullSentence);
                         };
 
@@ -451,6 +508,11 @@ public partial class MainWindow : Window
             _recordingTimer.Start();
             _answeredQuestions.Clear();
             _lastTranscriptChunk = string.Empty;
+            lock (_sessionTextLock)
+            {
+                _sessionTranscript.Clear();
+                _sessionQna.Clear();
+            }
             
             SetGeminiResponseText(_showTranscript
                 ? "Recording started...\n"
@@ -478,8 +540,9 @@ public partial class MainWindow : Window
             if (_saveAudio && !string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
             {
                 var fileInfo = new FileInfo(filePath);
+                var (transcriptPath, qnaPath) = SaveSessionTextFiles(filePath);
                 MessageBox.Show(
-                    $"Recording saved!\n\nFile: {filePath}\nSize: {fileInfo.Length / 1024 / 1024} MB", 
+                    $"Recording saved!\n\nAudio: {filePath}\nTranscript: {transcriptPath}\nQ&A: {qnaPath}\nSize: {fileInfo.Length / 1024 / 1024} MB", 
                     "Success", 
                     MessageBoxButton.OK, 
                     MessageBoxImage.Information);
