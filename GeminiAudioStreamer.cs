@@ -74,29 +74,78 @@ public class GeminiAudioStreamer : IDisposable
             }
 
             _cts = new CancellationTokenSource();
-            _webSocket = new ClientWebSocket();
-            _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            // Connect to Gemini Live API
-            var uri = new Uri($"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={_apiKey}");
-
-            Log("🌐 Connecting to Gemini Live API (v1alpha - early access)...");
-            await _webSocket.ConnectAsync(uri, _cts.Token);
-
-            _isConnected = true;
-            Log("✅ Connected to Gemini Live API");
-
-            // Start receiving messages
-            _receiveTask = Task.Run(() => ReceiveMessagesAsync(_cts.Token), _cts.Token);
-
-            await SendSetupMessageAsync(_cts.Token);
-            Log("⏳ Setup sent; waiting for live responses...");
+            await EstablishConnectionAsync(_cts.Token);
         }
         catch (Exception ex)
         {
             Log($"❌ Failed to connect to Gemini: {ex.Message}");
             _isConnected = false;
             throw;
+        }
+    }
+
+    private async Task EstablishConnectionAsync(CancellationToken ct)
+    {
+        _webSocket?.Dispose();
+        _webSocket = new ClientWebSocket();
+        _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var uri = new Uri($"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={_apiKey}");
+
+        Log("🌐 Connecting to Gemini Live API...");
+        await _webSocket.ConnectAsync(uri, ct);
+
+        _isConnected = true;
+        Log("✅ Connected to Gemini Live API");
+
+        _receiveTask = Task.Run(() => ReceiveMessagesAsync(ct), ct);
+
+        await SendSetupMessageAsync(ct);
+        Log("⏳ Setup sent; waiting for live responses...");
+    }
+
+    private async Task ReconnectAsync()
+    {
+        if (_cts == null || _cts.IsCancellationRequested)
+            return;
+
+        var delay = TimeSpan.FromSeconds(2);
+        const int maxRetries = 5;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            if (_cts.IsCancellationRequested)
+                return;
+
+            try
+            {
+                Log($"🔄 Reconnect attempt {attempt}/{maxRetries}...");
+
+                lock (_inputTranscriptBuffer)
+                    _inputTranscriptBuffer.Clear();
+
+                await EstablishConnectionAsync(_cts.Token);
+
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeoutCts.Token);
+                await _setupCompletionSource!.Task.WaitAsync(linked.Token);
+
+                Log("✅ Reconnected successfully");
+                return;
+            }
+            catch (Exception ex) when (attempt < maxRetries && !_cts.IsCancellationRequested)
+            {
+                _isConnected = false;
+                Log($"⚠️ Reconnect attempt {attempt} failed: {ex.Message}. Retrying in {delay.TotalSeconds}s...");
+                await Task.Delay(delay, _cts.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, 30));
+            }
+            catch (Exception ex)
+            {
+                _isConnected = false;
+                Log($"❌ All reconnect attempts failed: {ex.Message}");
+                return;
+            }
         }
     }
 
@@ -306,8 +355,7 @@ public class GeminiAudioStreamer : IDisposable
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    Log("🔌 WebSocket closed by server");
-                    Log($"Close status: {result.CloseStatus}, Description: {result.CloseStatusDescription}");
+                    Log($"🔌 WebSocket closed by server: {result.CloseStatus} - {result.CloseStatusDescription}");
                     break;
                 }
 
@@ -321,15 +369,21 @@ public class GeminiAudioStreamer : IDisposable
         catch (OperationCanceledException)
         {
             Log("🛑 Receive task cancelled");
-            if (_isConnected)
-            {
-                _setupCompletionSource?.TrySetCanceled();
-            }
+            _setupCompletionSource?.TrySetCanceled();
+            return;
         }
         catch (Exception ex)
         {
-            Log($"❌ Error receiving messages: {ex.Message}");
+            Log($"❌ Receive error: {ex.Message}");
             _setupCompletionSource?.TrySetException(ex);
+        }
+
+        // Connection dropped (session timeout or server close) — reconnect if not shutting down
+        if (!ct.IsCancellationRequested)
+        {
+            Log("🔄 Connection lost, reconnecting...");
+            _isConnected = false;
+            await ReconnectAsync();
         }
     }
 
