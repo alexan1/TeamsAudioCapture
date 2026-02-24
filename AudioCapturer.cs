@@ -1,4 +1,5 @@
 using NAudio.CoreAudioApi;
+using NAudio.MediaFoundation;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using System;
@@ -21,6 +22,7 @@ public class AudioCapturer
     private readonly GeminiAudioStreamer? _geminiStreamer;
     private readonly bool _saveAudio;
     private readonly bool _captureMicrophone;
+    private string? _tempWaveFilePath;
     private long _totalBytesRecorded;
     private System.Threading.Timer? _mixerTimer;
     private readonly object _mixerLock = new();
@@ -45,9 +47,16 @@ public class AudioCapturer
                 ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
                 : saveLocation;
 
+            var fileStamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+
             FilePath = Path.Combine(
                 folder,
-                $"teams-audio-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.wav"
+                $"teams-audio-{fileStamp}.mp3"
+            );
+
+            _tempWaveFilePath = Path.Combine(
+                folder,
+                $"teams-audio-{fileStamp}.wav"
             );
         }
 
@@ -126,7 +135,10 @@ public class AudioCapturer
                 }
 
                 var outputFormat = _targetFormat ?? waveFormat;
-                _writer = new WaveFileWriter(FilePath, outputFormat);
+                var wavOutputPath = string.IsNullOrWhiteSpace(_tempWaveFilePath)
+                    ? Path.ChangeExtension(FilePath, ".wav")
+                    : _tempWaveFilePath;
+                _writer = new WaveFileWriter(wavOutputPath, outputFormat);
             }
 
             _systemDataHandler = async (s, e) =>
@@ -383,6 +395,35 @@ public class AudioCapturer
             await Task.Delay(100).ConfigureAwait(false);
 
             _writer?.Dispose();
+
+            if (_saveAudio)
+            {
+                var tempWavePath = _tempWaveFilePath;
+                if (!string.IsNullOrWhiteSpace(tempWavePath) && File.Exists(tempWavePath))
+                {
+                    try
+                    {
+                        using (var reader = new AudioFileReader(tempWavePath))
+                        {
+                            MediaFoundationEncoder.EncodeToMp3(reader, FilePath);
+                        }
+
+                        File.Delete(tempWavePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        var fallbackPath = Path.ChangeExtension(FilePath, ".wav");
+                        FilePath = fallbackPath;
+                        if (!string.Equals(tempWavePath, fallbackPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            File.Move(tempWavePath, fallbackPath, overwrite: true);
+                        }
+
+                        Console.WriteLine($"⚠️ MP3 conversion failed. Saved WAV instead: {ex.Message}");
+                    }
+                }
+            }
+
             _systemCapture?.Dispose();
             _micCapture?.Dispose();
 
@@ -391,6 +432,7 @@ public class AudioCapturer
             _micCapture = null;
             _systemBuffer = null;
             _micBuffer = null;
+            _tempWaveFilePath = null;
         }
         catch (Exception ex)
         {

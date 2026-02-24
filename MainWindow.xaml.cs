@@ -609,7 +609,7 @@ public partial class MainWindow : Window
             var dialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Select Audio File",
-                Filter = "Audio Files (*.wav;*.mp3;*.m4a;*.ogg;*.flac)|*.wav;*.mp3;*.m4a;*.ogg;*.flac|All Files (*.*)|*.*",
+                Filter = "Audio Files (*.mp3;*.wav;*.m4a;*.ogg;*.flac)|*.mp3;*.wav;*.m4a;*.ogg;*.flac|All Files (*.*)|*.*",
                 Multiselect = false
             };
 

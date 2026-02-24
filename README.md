@@ -12,7 +12,7 @@ Windows desktop application for capturing Teams meetings to WAV files with optio
 - 📊 Real-time audio level visualization
 - ⏱️ Recording time tracker
 - ⚙️ Built-in settings management
-- 📁 Saves files to Desktop with timestamp
+- 📁 Saves files with timestamp
 
 ## Requirements
 
