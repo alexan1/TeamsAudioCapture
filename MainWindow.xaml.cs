@@ -328,11 +328,20 @@ public partial class MainWindow : Window
                             }
                         };
 
-                        // Verbatim speech transcription - use for question detection
-                        _geminiStreamer.OnInputTranscriptReceived += (transcript) =>
+                        // Individual chunks - for live transcript display only
+                        _geminiStreamer.OnInputTranscriptReceived += (chunk) =>
                         {
-                            Console.WriteLine($"📝 Speech transcribed: {transcript}");
-                            _ = TryAnswerQuestionAsync(transcript);
+                            if (_showTranscript)
+                            {
+                                Dispatcher.Invoke(() => AppendGeminiResponseText(chunk));
+                            }
+                        };
+
+                        // Full sentence at turn end - use for question detection
+                        _geminiStreamer.OnTurnComplete += (fullSentence) =>
+                        {
+                            Console.WriteLine($"📝 Full sentence: {fullSentence}");
+                            _ = TryAnswerQuestionAsync(fullSentence);
                         };
 
                         GeminiStatusText.Text = "(Connected)";

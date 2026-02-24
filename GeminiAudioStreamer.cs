@@ -28,6 +28,9 @@ public class GeminiAudioStreamer : IDisposable
 
     public event Action<string>? OnResponseReceived;
     public event Action<string>? OnInputTranscriptReceived;
+    public event Action<string>? OnTurnComplete;
+
+    private readonly System.Text.StringBuilder _inputTranscriptBuffer = new();
 
     public GeminiAudioStreamer(string apiKey)
     {
@@ -346,22 +349,23 @@ public class GeminiAudioStreamer : IDisposable
             // Handle input_transcription (real-time user speech transcription from native-audio model)
             if (doc.RootElement.TryGetProperty("serverContent", out var serverContent))
             {
-                // Check for input_transcription (verbatim user speech from inputAudioTranscription config)
+                // Accumulate verbatim speech chunks; fire OnTurnComplete with the full sentence
                 if (serverContent.TryGetProperty("inputTranscription", out var inputTranscription))
                 {
                     if (inputTranscription.TryGetProperty("text", out var text))
                     {
-                        var transcript = text.GetString();
-                        if (!string.IsNullOrWhiteSpace(transcript))
+                        var chunk = text.GetString();
+                        if (!string.IsNullOrWhiteSpace(chunk))
                         {
-                            Log($"📝 Input Transcript: {transcript}");
+                            Log($"📝 Input chunk: {chunk}");
                             _lastTranscriptionTime = DateTime.UtcNow;
-                            OnInputTranscriptReceived?.Invoke(transcript);
+                            lock (_inputTranscriptBuffer)
+                                _inputTranscriptBuffer.Append(chunk);
+                            OnInputTranscriptReceived?.Invoke(chunk);
                         }
                     }
                 }
 
-                // Also handle modelTurn for backward compatibility (though native-audio uses inputTranscription)
                 if (serverContent.TryGetProperty("modelTurn", out var modelTurn) &&
                     modelTurn.TryGetProperty("parts", out var parts))
                 {
@@ -380,11 +384,26 @@ public class GeminiAudioStreamer : IDisposable
                     }
                 }
 
-                // Handle turn_complete signal (settle-based completion will also trigger on 1.5s silence)
-                if (serverContent.TryGetProperty("turnComplete", out var turnComplete) && 
+                // Fire full accumulated sentence for question detection, then clear buffer
+                if (serverContent.TryGetProperty("turnComplete", out var turnComplete) &&
                     turnComplete.GetBoolean())
                 {
-                    Log("✅ Turn complete signal received");
+                    string fullSentence;
+                    lock (_inputTranscriptBuffer)
+                    {
+                        fullSentence = _inputTranscriptBuffer.ToString().Trim();
+                        _inputTranscriptBuffer.Clear();
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(fullSentence))
+                    {
+                        Log($"✅ Turn complete: {fullSentence}");
+                        OnTurnComplete?.Invoke(fullSentence);
+                    }
+                    else
+                    {
+                        Log("✅ Turn complete (no transcript)");
+                    }
                 }
             }
 
