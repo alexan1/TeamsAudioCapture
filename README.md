@@ -4,14 +4,15 @@ Windows desktop application for capturing Teams meetings to WAV files with optio
 
 ## Features
 
-- 🎙️ Captures system audio via WASAPI loopback
+- 🎙️ **Captures system audio** via WASAPI loopback (always enabled)
+- 🎤 **Optional microphone capture** to include your voice in recordings
 - 💾 Saves recordings to WAV format
 - 🤖 Optional real-time streaming to Gemini Voice API
 - 🖥️ Modern WPF user interface
 - 📊 Real-time audio level visualization
 - ⏱️ Recording time tracker
 - ⚙️ Built-in settings management
-- 📁 Saves files to Desktop with timestamp
+- 📁 Saves files with timestamp
 
 ## Requirements
 
@@ -38,17 +39,36 @@ dotnet run
 
 Or open the solution in Visual Studio and press F5.
 
-### 3. Configure Gemini API (Optional)
+### 3. Configure Gemini API and Recording Options (Optional)
 
-To enable streaming to Gemini Voice API:
+To customize your recording experience:
 
 1. Click the **Settings** button in the application
-2. Enter your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
-3. Click **Save**
+2. **Gemini API** (optional): Enter your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+3. **Recording Mode**:
+   - **Save audio files to disk** - Creates WAV files on your computer
+   - **Capture microphone** - Include your voice in recordings (system audio always captured)
+   - **Process audio with Gemini API** - Real-time AI transcription
+   - **Show transcript in main window** - Display AI responses
+4. **Audio Save Location**: Choose where to save WAV files (default: Desktop)
+5. Click **Save**
 
-The API key is stored locally in appsettings.Local.json and is git-ignored for security.
+The settings are stored locally in `appsettings.Local.json` and are git-ignored for security.
 
 ## Usage
+
+### Audio Capture Modes
+
+**System Audio (Always Captured)**
+- Captures everything playing through your speakers/headphones
+- Includes: Teams meeting participants, shared videos, system sounds
+- Uses WASAPI loopback technology
+
+**Microphone (Optional)**
+- Enable in Settings → "Capture microphone (your voice)"
+- Captures your voice from the default microphone
+- Mixed with system audio in real-time
+- Ideal for recording complete Teams conversations
 
 ### Starting a Recording
 
@@ -66,9 +86,16 @@ The API key is stored locally in appsettings.Local.json and is git-ignored for s
 
 ### Settings
 
-- Click **Settings** to configure your Gemini API key
-- Settings are automatically saved to appsettings.Local.json
-- Changes take effect on next recording session
+Click **Settings** to configure:
+
+- **Gemini API Key**: For AI transcription and analysis
+- **Save Audio**: Enable/disable saving to WAV files
+- **Capture Microphone**: Include your voice (system audio always captured)
+- **Process with Gemini**: Enable real-time AI processing
+- **Show Transcript**: Display AI responses in main window
+- **Save Location**: Custom folder for recordings
+
+All settings are automatically saved and take effect on the next recording session.
 
 ## User Interface
 
@@ -129,6 +156,11 @@ dotnet publish -c Release -r win-x64 --self-contained
 - Ensure system audio is playing
 - Check Windows audio settings
 - Try restarting the application
+
+**Microphone not recording:**
+- Check microphone is set as default device in Windows
+- Enable "Capture microphone" in Settings
+- Check microphone permissions
 
 **Gemini not responding:**
 - Verify API key is correct in Settings

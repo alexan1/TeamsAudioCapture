@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.Configuration;
@@ -18,6 +19,9 @@ public partial class MainWindow : Window
     private bool _showTranscript;
     private readonly HashSet<string> _answeredQuestions = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _transcriptLock = new();
+    private readonly object _sessionTextLock = new();
+    private readonly StringBuilder _sessionTranscript = new();
+    private readonly StringBuilder _sessionQna = new();
     private string _lastTranscriptChunk = string.Empty;
     private DispatcherTimer _recordingTimer;
     private DateTime _recordingStartTime;
@@ -214,32 +218,84 @@ public partial class MainWindow : Window
     private async System.Threading.Tasks.Task TryAnswerQuestionAsync(string transcriptChunk)
     {
         if (_geminiStreamer == null)
-        {
             return;
-        }
 
         var question = ExtractQuestion(transcriptChunk);
         if (string.IsNullOrWhiteSpace(question))
         {
+            Console.WriteLine($"🔍 No question detected in: {transcriptChunk[..Math.Min(50, transcriptChunk.Length)]}...");
             return;
         }
+
+        Console.WriteLine($"❓ Question detected: {question}");
 
         if (!_answeredQuestions.Add(question))
         {
+            Console.WriteLine($"⏭️ Question already answered: {question}");
             return;
         }
 
-        var answer = await _geminiStreamer.GetAnswerForQuestionAsync(question);
-        if (string.IsNullOrWhiteSpace(answer))
-        {
-            return;
-        }
-
+        // Show question header immediately — no waiting for the answer
         await Dispatcher.InvokeAsync(() =>
         {
             EnsureAnswerWindow();
-            _answerWindow?.AppendAnswer(question, answer);
+            _answerWindow?.StartNewAnswer(question);
         });
+
+        var answerBuffer = new StringBuilder();
+
+        // Stream answer tokens as they arrive
+        await _geminiStreamer.StreamAnswerForQuestionAsync(question, chunk =>
+        {
+            lock (answerBuffer)
+            {
+                answerBuffer.Append(chunk);
+            }
+            Dispatcher.Invoke(() => _answerWindow?.AppendToLastAnswer(chunk));
+        });
+
+        await Dispatcher.InvokeAsync(() => _answerWindow?.FinalizeLastAnswer());
+
+        string finalAnswer;
+        lock (answerBuffer)
+        {
+            finalAnswer = answerBuffer.ToString().Trim();
+        }
+
+        lock (_sessionTextLock)
+        {
+            _sessionQna.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Q: {question}");
+            _sessionQna.AppendLine($"A: {finalAnswer}");
+            _sessionQna.AppendLine();
+        }
+    }
+
+    private (string transcriptPath, string qnaPath) SaveSessionTextFiles(string audioFilePath)
+    {
+        var folder = Path.GetDirectoryName(audioFilePath) ?? Directory.GetCurrentDirectory();
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(audioFilePath);
+        var transcriptPath = Path.Combine(folder, $"{fileNameWithoutExtension}_transcript.txt");
+        var qnaPath = Path.Combine(folder, $"{fileNameWithoutExtension}_qa.txt");
+
+        Directory.CreateDirectory(folder);
+
+        string transcriptText;
+        string qnaText;
+        lock (_sessionTextLock)
+        {
+            transcriptText = _sessionTranscript.Length == 0
+                ? "No transcript captured during this recording."
+                : _sessionTranscript.ToString().Trim();
+
+            qnaText = _sessionQna.Length == 0
+                ? "No questions were detected/answered during this recording."
+                : _sessionQna.ToString().Trim();
+        }
+
+        File.WriteAllText(transcriptPath, transcriptText);
+        File.WriteAllText(qnaPath, qnaText);
+
+        return (transcriptPath, qnaPath);
     }
 
     private void EnsureAnswerWindow()
@@ -279,6 +335,7 @@ public partial class MainWindow : Window
             // Load settings
             var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
             var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+            var captureMicrophone = _configuration.GetValue<bool>("Recording:CaptureMicrophone", false);
             var saveLocation = _configuration["Recording:AudioSaveLocation"];
             _saveAudio = saveAudio;
 
@@ -300,30 +357,91 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
                 {
                     _geminiStreamer = new GeminiAudioStreamer(apiKey);
-                    await _geminiStreamer.ConnectAsync();
-                    EnsureAnswerWindow();
 
-                    _geminiStreamer.OnResponseReceived += (response) =>
+                    try
                     {
-                        var delta = GetTranscriptDelta(response);
-                        if (string.IsNullOrWhiteSpace(delta))
+                        await _geminiStreamer.ConnectAsync();
+
+                        // CRITICAL: Wait for Gemini setup to complete before starting audio capture
+                        // Use timeout to prevent indefinite hanging
+                        using var timeoutCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        await _geminiStreamer.WaitForSetupCompleteAsync(timeoutCts.Token);
+
+                        EnsureAnswerWindow();
+
+                        // Model review/response - show in transcript window
+                        _geminiStreamer.OnResponseReceived += (response) =>
                         {
+                            Console.WriteLine($"📥 Model response: {response}");
+                            if (_showTranscript)
+                            {
+                                Dispatcher.Invoke(() => AppendGeminiResponseText(response));
+                            }
+                        };
+
+                        // Individual chunks - for live transcript display only
+                        _geminiStreamer.OnInputTranscriptReceived += (chunk) =>
+                        {
+                            if (_showTranscript)
+                            {
+                                Dispatcher.Invoke(() => AppendGeminiResponseText(chunk));
+                            }
+                        };
+
+                        // Full sentence at turn end - use for question detection
+                        _geminiStreamer.OnTurnComplete += (fullSentence) =>
+                        {
+                            Console.WriteLine($"📝 Full sentence: {fullSentence}");
+
+                            lock (_sessionTextLock)
+                            {
+                                _sessionTranscript.AppendLine(fullSentence);
+                            }
+
+                            _ = TryAnswerQuestionAsync(fullSentence);
+                        };
+
+                        GeminiStatusText.Text = "(Connected)";
+                        GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
+                    }
+                    catch (Exception ex)
+                    {
+                        var serverError = _geminiStreamer?.LastServerError;
+                        var logPath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
+                        _geminiStreamer = null;
+
+                        var errorDetails = ex is TaskCanceledException or OperationCanceledException
+                            ? "Setup timed out after 10 seconds. The Gemini API may be unavailable or slow to respond."
+                            : ex.Message;
+
+                        // If we have a server error, show it
+                        if (!string.IsNullOrWhiteSpace(serverError))
+                        {
+                            errorDetails = $"Server Error:\n{serverError}\n\nOriginal Exception: {errorDetails}";
+                        }
+
+                        errorDetails += $"\n\nDebug log: {logPath}";
+
+                        if (!saveAudio)
+                        {
+                            MessageBox.Show(
+                                $"Failed to connect to Gemini Live API.\n\n{errorDetails}\n\nEnable Save Audio in Settings or fix Gemini configuration.",
+                                "Gemini Connection Failed",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Error);
                             return;
                         }
 
-                        if (_showTranscript)
-                        {
-                            Dispatcher.Invoke(() =>
-                            {
-                                AppendGeminiResponseText(delta);
-                            });
-                        }
+                        processWithGemini = false;
+                        GeminiStatusText.Text = "(Connection failed - recording without Gemini)";
+                        GeminiStatusText.Foreground = System.Windows.Media.Brushes.Orange;
 
-                        _ = TryAnswerQuestionAsync(response);
-                    };
-
-                    GeminiStatusText.Text = "(Connected)";
-                    GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
+                        MessageBox.Show(
+                            $"Gemini Live API connection failed. Recording will continue with audio capture only.\n\n{errorDetails}",
+                            "Gemini Unavailable",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }
                 }
                 else
                 {
@@ -337,7 +455,7 @@ public partial class MainWindow : Window
             }
 
             // Create and start audio capturer
-            _capturer = new AudioCapturer(_geminiStreamer, saveLocation, saveAudio);
+            _capturer = new AudioCapturer(_geminiStreamer, saveLocation, saveAudio, captureMicrophone);
             
             _capturer.OnDeviceSelected += (deviceName) =>
             {
@@ -390,6 +508,11 @@ public partial class MainWindow : Window
             _recordingTimer.Start();
             _answeredQuestions.Clear();
             _lastTranscriptChunk = string.Empty;
+            lock (_sessionTextLock)
+            {
+                _sessionTranscript.Clear();
+                _sessionQna.Clear();
+            }
             
             SetGeminiResponseText(_showTranscript
                 ? "Recording started...\n"
@@ -417,8 +540,9 @@ public partial class MainWindow : Window
             if (_saveAudio && !string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
             {
                 var fileInfo = new FileInfo(filePath);
+                var (transcriptPath, qnaPath) = SaveSessionTextFiles(filePath);
                 MessageBox.Show(
-                    $"Recording saved!\n\nFile: {filePath}\nSize: {fileInfo.Length / 1024 / 1024} MB", 
+                    $"Recording saved!\n\nAudio: {filePath}\nTranscript: {transcriptPath}\nQ&A: {qnaPath}\nSize: {fileInfo.Length / 1024 / 1024} MB", 
                     "Success", 
                     MessageBoxButton.OK, 
                     MessageBoxImage.Information);
@@ -485,7 +609,7 @@ public partial class MainWindow : Window
             var dialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Select Audio File",
-                Filter = "Audio Files (*.wav;*.mp3;*.m4a;*.ogg;*.flac)|*.wav;*.mp3;*.m4a;*.ogg;*.flac|All Files (*.*)|*.*",
+                Filter = "Audio Files (*.mp3;*.wav;*.m4a;*.ogg;*.flac)|*.mp3;*.wav;*.m4a;*.ogg;*.flac|All Files (*.*)|*.*",
                 Multiselect = false
             };
 
@@ -512,21 +636,15 @@ public partial class MainWindow : Window
 
                 _geminiStreamer.OnResponseReceived += (response) =>
                 {
-                    var delta = GetTranscriptDelta(response);
-                    if (string.IsNullOrWhiteSpace(delta))
-                    {
-                        return;
-                    }
-
                     if (_showTranscript)
                     {
-                        Dispatcher.Invoke(() =>
-                        {
-                            AppendGeminiResponseText(delta);
-                        });
+                        Dispatcher.Invoke(() => AppendGeminiResponseText(response));
                     }
+                };
 
-                    _ = TryAnswerQuestionAsync(response);
+                _geminiStreamer.OnInputTranscriptReceived += (transcript) =>
+                {
+                    _ = TryAnswerQuestionAsync(transcript);
                 };
                 _lastTranscriptChunk = string.Empty;
                 // Process the file
