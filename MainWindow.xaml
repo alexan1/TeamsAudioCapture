@@ -1,6 +1,7 @@
 <Window x:Class="TeamsAudioCapture.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:properties="clr-namespace:TeamsAudioCapture.Properties"
         Title="Teams Audio Capture" Height="600" Width="800"
         Background="#F5F5F5">
     <Window.Resources>
@@ -52,7 +53,7 @@
         <!-- Header -->
         <StackPanel Grid.Row="0" Margin="0,0,0,20">
             <TextBlock Text="🎙️ Teams Audio Capture" FontSize="24" FontWeight="Bold" Foreground="#333"/>
-            <TextBlock Text="Capture system audio and stream to Gemini Voice API" Foreground="#666" FontSize="12"/>
+            <TextBlock Text="{x:Static properties:Resources.MainSubtitleLiveApi}" Foreground="#666" FontSize="12"/>
             <CheckBox x:Name="ShowTranscriptRuntimeCheckBox"
                       Content="Show Transcript"
                       Margin="5,8,5,0"
@@ -109,13 +110,13 @@
                 </Grid.RowDefinitions>
                 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
-                    <TextBlock Text="🤖 Gemini Responses" FontWeight="Bold" FontSize="14"/>
+                    <TextBlock Text="{x:Static properties:Resources.MainLiveResponses}" FontWeight="Bold" FontSize="14"/>
                     <TextBlock x:Name="GeminiStatusText" Text="(Not connected)" Foreground="#999" Margin="10,0,0,0"/>
                 </StackPanel>
                 
                 <ScrollViewer x:Name="GeminiResponseScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto">
                     <TextBlock x:Name="GeminiResponseText" TextWrapping="Wrap" 
-                              Text="Gemini responses will appear here during recording..."
+                              Text="{x:Static properties:Resources.MainResponsesPlaceholder}"
                               Foreground="#666" FontFamily="Consolas"/>
                 </ScrollViewer>
             </Grid>

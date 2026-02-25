@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Navigation;
@@ -11,6 +12,10 @@ namespace TeamsAudioCapture;
 
 public partial class SettingsWindow : Window
 {
+    private const string ProviderGemini = "Gemini";
+    private const string ProviderOpenAi = "OpenAI";
+    private const string DefaultOpenAiModel = "gpt-4o-mini-realtime-preview";
+
     private readonly IConfiguration _configuration;
     private const string LocalSettingsFile = "appsettings.Local.json";
 
@@ -23,26 +28,50 @@ public partial class SettingsWindow : Window
 
     private void LoadSettings()
     {
-        // Load API Key
-        var apiKey = _configuration["Gemini:ApiKey"];
-        if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
+        var geminiApiKey = _configuration["Gemini:ApiKey"];
+        if (!string.IsNullOrWhiteSpace(geminiApiKey) && geminiApiKey != "YOUR_API_KEY_HERE")
         {
-            ApiKeyTextBox.Text = apiKey;
+            ApiKeyTextBox.Text = geminiApiKey;
         }
 
-        // Load recording mode settings
+        var openAiApiKey = _configuration["OpenAI:ApiKey"];
+        if (!string.IsNullOrWhiteSpace(openAiApiKey) && openAiApiKey != "YOUR_API_KEY_HERE")
+        {
+            OpenAiApiKeyTextBox.Text = openAiApiKey;
+        }
+
+        var openAiModel = _configuration["OpenAI:Model"];
+        OpenAiModelTextBox.Text = string.IsNullOrWhiteSpace(openAiModel)
+            ? DefaultOpenAiModel
+            : openAiModel;
+
+        var liveProvider = _configuration["Recording:LiveProvider"] ?? ProviderGemini;
+        foreach (var item in LiveProviderComboBox.Items.OfType<System.Windows.Controls.ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag as string, liveProvider, StringComparison.OrdinalIgnoreCase))
+            {
+                LiveProviderComboBox.SelectedItem = item;
+                break;
+            }
+        }
+
+        if (LiveProviderComboBox.SelectedItem == null && LiveProviderComboBox.Items.Count > 0)
+        {
+            LiveProviderComboBox.SelectedIndex = 0;
+        }
+
         var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
         var captureMicrophone = _configuration.GetValue<bool>("Recording:CaptureMicrophone", false);
-        var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+        var processWithLiveApi = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
         var showTranscript = _configuration.GetValue<bool>("Recording:ShowTranscript", false);
         var saveLocation = _configuration["Recording:AudioSaveLocation"] ?? "";
 
         SaveAudioCheckBox.IsChecked = saveAudio;
         CaptureMicrophoneCheckBox.IsChecked = captureMicrophone;
-        ProcessWithGeminiCheckBox.IsChecked = processWithGemini;
+        ProcessWithGeminiCheckBox.IsChecked = processWithLiveApi;
         ShowTranscriptCheckBox.IsChecked = showTranscript;
-        SaveLocationTextBox.Text = string.IsNullOrWhiteSpace(saveLocation) 
-            ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop) 
+        SaveLocationTextBox.Text = string.IsNullOrWhiteSpace(saveLocation)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
             : saveLocation;
     }
 
@@ -50,68 +79,85 @@ public partial class SettingsWindow : Window
     {
         try
         {
-            var apiKey = ApiKeyTextBox.Text.Trim();
+            var geminiApiKey = ApiKeyTextBox.Text.Trim();
+            var openAiApiKey = OpenAiApiKeyTextBox.Text.Trim();
+            var openAiModel = OpenAiModelTextBox.Text.Trim();
             var saveAudio = SaveAudioCheckBox.IsChecked ?? true;
             var captureMicrophone = CaptureMicrophoneCheckBox.IsChecked ?? false;
-            var processWithGemini = ProcessWithGeminiCheckBox.IsChecked ?? false;
+            var processWithLiveApi = ProcessWithGeminiCheckBox.IsChecked ?? false;
             var showTranscript = ShowTranscriptCheckBox.IsChecked ?? false;
             var saveLocation = SaveLocationTextBox.Text.Trim();
+            var selectedProvider = (LiveProviderComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? ProviderGemini;
 
-            // Validation
-            if (!saveAudio && !processWithGemini)
+            if (!saveAudio && !processWithLiveApi)
             {
-                MessageBox.Show("Please enable at least one option: Save Audio or Process with Gemini.", 
+                MessageBox.Show(Properties.Resources.ValidationRecordingMode,
                     "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            if (processWithGemini && string.IsNullOrWhiteSpace(apiKey))
+            if (processWithLiveApi && string.Equals(selectedProvider, ProviderOpenAi, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(openAiApiKey))
             {
-                MessageBox.Show("Please enter an API key to process with Gemini.", 
+                MessageBox.Show(Properties.Resources.ValidationOpenAiApiKeyRequired,
                     "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            // Use Desktop as default if save location is empty
+            if (processWithLiveApi && string.Equals(selectedProvider, ProviderGemini, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(geminiApiKey))
+            {
+                MessageBox.Show(Properties.Resources.ValidationGeminiApiKeyRequired,
+                    "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(openAiModel))
+            {
+                openAiModel = DefaultOpenAiModel;
+            }
+
             if (string.IsNullOrWhiteSpace(saveLocation))
             {
                 saveLocation = "";
             }
 
-            // Create or update appsettings.Local.json
             var localSettingsPath = Path.Combine(Directory.GetCurrentDirectory(), LocalSettingsFile);
 
             var settings = new
             {
                 Gemini = new
                 {
-                    ApiKey = string.IsNullOrWhiteSpace(apiKey) ? "YOUR_API_KEY_HERE" : apiKey
+                    ApiKey = string.IsNullOrWhiteSpace(geminiApiKey) ? "YOUR_API_KEY_HERE" : geminiApiKey
+                },
+                OpenAI = new
+                {
+                    ApiKey = string.IsNullOrWhiteSpace(openAiApiKey) ? "YOUR_API_KEY_HERE" : openAiApiKey,
+                    Model = openAiModel
                 },
                 Recording = new
                 {
                     SaveAudio = saveAudio,
-                    ProcessWithGemini = processWithGemini,
+                    ProcessWithGemini = processWithLiveApi,
                     ShowTranscript = showTranscript,
                     AudioSaveLocation = saveLocation,
-                    CaptureMicrophone = captureMicrophone
+                    CaptureMicrophone = captureMicrophone,
+                    LiveProvider = selectedProvider
                 }
             };
 
-            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions 
-            { 
-                WriteIndented = true 
+            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
+            {
+                WriteIndented = true
             });
 
             File.WriteAllText(localSettingsPath, json);
 
-            // Also copy to bin directory if different
             var binPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, LocalSettingsFile);
             if (Path.GetFullPath(localSettingsPath) != Path.GetFullPath(binPath))
             {
                 File.WriteAllText(binPath, json);
             }
 
-            MessageBox.Show("Settings saved successfully!", "Success", 
+            MessageBox.Show("Settings saved successfully!", "Success",
                 MessageBoxButton.OK, MessageBoxImage.Information);
 
             DialogResult = true;
@@ -119,7 +165,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to save settings: {ex.Message}", "Error", 
+            MessageBox.Show($"Failed to save settings: {ex.Message}", "Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
