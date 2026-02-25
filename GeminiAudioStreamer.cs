@@ -8,8 +8,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
+using TeamsAudioCapture;
 
-public class GeminiAudioStreamer : IDisposable
+public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
 {
     private const string DefaultLiveModel = "models/gemini-2.5-flash-native-audio-preview-12-2025";
     private readonly string _apiKey;
@@ -815,6 +816,14 @@ public class GeminiAudioStreamer : IDisposable
         _httpClient?.Dispose();
     }
 }
+
+
+
+
+
+
+
+
 
 
 

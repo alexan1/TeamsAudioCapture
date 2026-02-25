@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="SettingsSubtitleLiveApi" xml:space="preserve">
+    <value>Configure live transcription and Q&amp;A</value>
+  </data>
+  <data name="SettingsLiveProviderTitle" xml:space="preserve">
+    <value>🔁 Live Provider</value>
+  </data>
+  <data name="SettingsLiveProviderLabel" xml:space="preserve">
+    <value>Use live provider</value>
+  </data>
+  <data name="SettingsLiveProviderGemini" xml:space="preserve">
+    <value>Gemini Live</value>
+  </data>
+  <data name="SettingsLiveProviderOpenAi" xml:space="preserve">
+    <value>OpenAI Realtime (ChatGPT)</value>
+  </data>
+  <data name="SettingsOpenAiTitle" xml:space="preserve">
+    <value>🧠 OpenAI API Configuration</value>
+  </data>
+  <data name="SettingsOpenAiApiKeyLabel" xml:space="preserve">
+    <value>API Key</value>
+  </data>
+  <data name="SettingsOpenAiApiKeyHelp" xml:space="preserve">
+    <value>Get your API key from OpenAI</value>
+  </data>
+  <data name="SettingsOpenAiModelLabel" xml:space="preserve">
+    <value>Realtime Model</value>
+  </data>
+  <data name="SettingsOpenAiModelHelp" xml:space="preserve">
+    <value>Default: gpt-4o-mini-realtime-preview</value>
+  </data>
+  <data name="SettingsProcessWithLiveApi" xml:space="preserve">
+    <value>Process audio with Live API</value>
+  </data>
+  <data name="MainSubtitleLiveApi" xml:space="preserve">
+    <value>Capture system audio and stream to Live API</value>
+  </data>
+  <data name="MainLiveResponses" xml:space="preserve">
+    <value>🤖 Live Responses</value>
+  </data>
+  <data name="SettingsOpenAiLinkText" xml:space="preserve">
+    <value>OpenAI API keys</value>
+  </data>
+  <data name="ValidationOpenAiApiKeyRequired" xml:space="preserve">
+    <value>Please enter an API key to process with OpenAI.</value>
+  </data>
+  <data name="ValidationGeminiApiKeyRequired" xml:space="preserve">
+    <value>Please enter an API key to process with Gemini.</value>
+  </data>
+  <data name="SettingsProviderDescription" xml:space="preserve">
+    <value>Select which live provider to use for transcription and Q&amp;A.</value>
+  </data>
+  <data name="OpenAiFileUploadNotSupported" xml:space="preserve">
+    <value>OpenAI file transcription is not supported yet. Please use Gemini for file uploads.</value>
+  </data>
+  <data name="MainResponsesPlaceholder" xml:space="preserve">
+    <value>Live responses will appear here during recording...</value>
+  </data>
+  <data name="TranscriptEnabledMessage" xml:space="preserve">
+    <value>Transcript enabled. Waiting for speech...
+</value>
+  </data>
+  <data name="TranscriptHiddenMessage" xml:space="preserve">
+    <value>Transcript view is hidden. Detected questions and live answers appear in the Answers window.
+</value>
+  </data>
+  <data name="RecordingStartedMessage" xml:space="preserve">
+    <value>Recording started...
+</value>
+  </data>
+  <data name="ValidationRecordingMode" xml:space="preserve">
+    <value>Both 'Save Audio' and 'Process with Live API' are disabled.
+Please enable at least one option in Settings.</value>
+  </data>
+</root>

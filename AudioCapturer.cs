@@ -19,7 +19,7 @@ public class AudioCapturer
     private WaveFormat? _targetFormat;
     private EventHandler<WaveInEventArgs>? _systemDataHandler;
     private EventHandler<WaveInEventArgs>? _micDataHandler;
-    private readonly GeminiAudioStreamer? _geminiStreamer;
+    private readonly ILiveAudioStreamer? _geminiStreamer;
     private readonly bool _saveAudio;
     private readonly bool _captureMicrophone;
     private string? _tempWaveFilePath;
@@ -34,7 +34,7 @@ public class AudioCapturer
     public event Action<long>? OnDataRecorded;
     public event Action<string>? OnError;
 
-    public AudioCapturer(GeminiAudioStreamer? geminiStreamer = null, string? saveLocation = null, bool saveAudio = true, bool captureMicrophone = false)
+    public AudioCapturer(ILiveAudioStreamer? geminiStreamer = null, string? saveLocation = null, bool saveAudio = true, bool captureMicrophone = false)
     {
         _geminiStreamer = geminiStreamer;
         _saveAudio = saveAudio;

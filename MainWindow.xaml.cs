@@ -12,11 +12,16 @@ namespace TeamsAudioCapture;
 
 public partial class MainWindow : Window
 {
+    private const string ProviderGemini = "Gemini";
+    private const string ProviderOpenAi = "OpenAI";
+    private const string DefaultOpenAiModel = "gpt-4o-mini-realtime-preview";
+
     private AudioCapturer? _capturer;
-    private GeminiAudioStreamer? _geminiStreamer;
+    private ILiveAudioStreamer? _streamer;
     private AnswerWindow? _answerWindow;
     private bool _saveAudio;
     private bool _showTranscript;
+    private string _liveProvider = ProviderGemini;
     private readonly HashSet<string> _answeredQuestions = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _transcriptLock = new();
     private readonly object _sessionTextLock = new();
@@ -47,16 +52,18 @@ public partial class MainWindow : Window
             .AddJsonFile("appsettings.Local.json", optional: true)
             .Build();
 
-        // Check Gemini API configuration
-        var apiKey = _configuration["Gemini:ApiKey"];
-        var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+        _liveProvider = _configuration["Recording:LiveProvider"] ?? ProviderGemini;
+        var processWithLiveApi = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+        var apiKey = _liveProvider == ProviderOpenAi
+            ? _configuration["OpenAI:ApiKey"]
+            : _configuration["Gemini:ApiKey"];
 
-        if (processWithGemini && !string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
+        if (processWithLiveApi && !string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
         {
             GeminiStatusText.Text = "(Ready to connect)";
             GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
         }
-        else if (processWithGemini)
+        else if (processWithLiveApi)
         {
             GeminiStatusText.Text = "(API key required - click Settings)";
             GeminiStatusText.Foreground = System.Windows.Media.Brushes.Orange;
@@ -67,11 +74,10 @@ public partial class MainWindow : Window
             GeminiStatusText.Foreground = System.Windows.Media.Brushes.Gray;
         }
 
-        // Update status based on recording mode
         var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
         _showTranscript = _configuration.GetValue<bool>("Recording:ShowTranscript", false);
         ShowTranscriptRuntimeCheckBox.IsChecked = _showTranscript;
-        var mode = (saveAudio, processWithGemini) switch
+        var mode = (saveAudio, processWithLiveApi) switch
         {
             (true, true) => "💾+🤖 Save & Process",
             (true, false) => "💾 Save Only",
@@ -94,12 +100,12 @@ public partial class MainWindow : Window
             }
 
             SetGeminiResponseText(string.IsNullOrWhiteSpace(transcriptSnapshot)
-                ? "Transcript enabled. Waiting for speech...\n"
+                ? Properties.Resources.TranscriptEnabledMessage
                 : transcriptSnapshot);
             return;
         }
 
-        SetGeminiResponseText("Transcript view is hidden. Detected questions and Gemini answers appear in the Gemini Answers window.\n");
+        SetGeminiResponseText(Properties.Resources.TranscriptHiddenMessage);
     }
 
     private void SetGeminiResponseText(string text)
@@ -217,7 +223,7 @@ public partial class MainWindow : Window
 
     private async System.Threading.Tasks.Task TryAnswerQuestionAsync(string transcriptChunk)
     {
-        if (_geminiStreamer == null)
+        if (_streamer == null)
             return;
 
         var question = ExtractQuestion(transcriptChunk);
@@ -245,7 +251,7 @@ public partial class MainWindow : Window
         var answerBuffer = new StringBuilder();
 
         // Stream answer tokens as they arrive
-        await _geminiStreamer.StreamAnswerForQuestionAsync(question, chunk =>
+        await _streamer.StreamAnswerForQuestionAsync(question, chunk =>
         {
             lock (answerBuffer)
             {
@@ -328,134 +334,151 @@ public partial class MainWindow : Window
         _answerWindow.Show();
     }
 
+    private ILiveAudioStreamer? CreateStreamerForProvider(string liveProvider)
+    {
+        if (string.Equals(liveProvider, ProviderOpenAi, StringComparison.OrdinalIgnoreCase))
+        {
+            var apiKey = _configuration["OpenAI:ApiKey"];
+            if (string.IsNullOrWhiteSpace(apiKey) || apiKey == "YOUR_API_KEY_HERE")
+            {
+                MessageBox.Show(
+                    Properties.Resources.ValidationOpenAiApiKeyRequired,
+                    "API Key Required",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return null;
+            }
+
+            var model = _configuration["OpenAI:Model"];
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                model = DefaultOpenAiModel;
+            }
+
+            return new OpenAiRealtimeStreamer(apiKey, model);
+        }
+
+        var geminiKey = _configuration["Gemini:ApiKey"];
+        if (string.IsNullOrWhiteSpace(geminiKey) || geminiKey == "YOUR_API_KEY_HERE")
+        {
+            MessageBox.Show(
+                Properties.Resources.ValidationGeminiApiKeyRequired,
+                "API Key Required",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return null;
+        }
+
+        return new GeminiAudioStreamer(geminiKey);
+    }
+
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            // Load settings
             var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
-            var processWithGemini = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
+            var processWithLiveApi = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
             var captureMicrophone = _configuration.GetValue<bool>("Recording:CaptureMicrophone", false);
             var saveLocation = _configuration["Recording:AudioSaveLocation"];
             _saveAudio = saveAudio;
+            _liveProvider = _configuration["Recording:LiveProvider"] ?? ProviderGemini;
 
-            // Validate settings
-            if (!saveAudio && !processWithGemini)
+            if (!saveAudio && !processWithLiveApi)
             {
                 MessageBox.Show(
-                    "Both 'Save Audio' and 'Process with Gemini' are disabled.\nPlease enable at least one option in Settings.", 
-                    "Configuration Error", 
-                    MessageBoxButton.OK, 
+                    Properties.Resources.ValidationRecordingMode,
+                    "Configuration Error",
+                    MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
 
-            // Initialize Gemini if enabled and configured
-            if (processWithGemini)
+            if (processWithLiveApi)
             {
-                var apiKey = _configuration["Gemini:ApiKey"];
-                if (!string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
+                _streamer = CreateStreamerForProvider(_liveProvider);
+                if (_streamer == null)
                 {
-                    _geminiStreamer = new GeminiAudioStreamer(apiKey);
-
-                    try
-                    {
-                        await _geminiStreamer.ConnectAsync();
-
-                        // CRITICAL: Wait for Gemini setup to complete before starting audio capture
-                        // Use timeout to prevent indefinite hanging
-                        using var timeoutCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
-                        await _geminiStreamer.WaitForSetupCompleteAsync(timeoutCts.Token);
-
-                        EnsureAnswerWindow();
-
-                        // Model review/response - show in transcript window
-                        _geminiStreamer.OnResponseReceived += (response) =>
-                        {
-                            Console.WriteLine($"📥 Model response: {response}");
-                            if (_showTranscript)
-                            {
-                                Dispatcher.Invoke(() => AppendGeminiResponseText(response));
-                            }
-                        };
-
-                        // Individual chunks - for live transcript display only
-                        _geminiStreamer.OnInputTranscriptReceived += (chunk) =>
-                        {
-                            if (_showTranscript)
-                            {
-                                Dispatcher.Invoke(() => AppendGeminiResponseText(chunk));
-                            }
-                        };
-
-                        // Full sentence at turn end - use for question detection
-                        _geminiStreamer.OnTurnComplete += (fullSentence) =>
-                        {
-                            Console.WriteLine($"📝 Full sentence: {fullSentence}");
-
-                            lock (_sessionTextLock)
-                            {
-                                _sessionTranscript.AppendLine(fullSentence);
-                            }
-
-                            _ = TryAnswerQuestionAsync(fullSentence);
-                        };
-
-                        GeminiStatusText.Text = "(Connected)";
-                        GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
-                    }
-                    catch (Exception ex)
-                    {
-                        var serverError = _geminiStreamer?.LastServerError;
-                        var logPath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
-                        _geminiStreamer = null;
-
-                        var errorDetails = ex is TaskCanceledException or OperationCanceledException
-                            ? "Setup timed out after 10 seconds. The Gemini API may be unavailable or slow to respond."
-                            : ex.Message;
-
-                        // If we have a server error, show it
-                        if (!string.IsNullOrWhiteSpace(serverError))
-                        {
-                            errorDetails = $"Server Error:\n{serverError}\n\nOriginal Exception: {errorDetails}";
-                        }
-
-                        errorDetails += $"\n\nDebug log: {logPath}";
-
-                        if (!saveAudio)
-                        {
-                            MessageBox.Show(
-                                $"Failed to connect to Gemini Live API.\n\n{errorDetails}\n\nEnable Save Audio in Settings or fix Gemini configuration.",
-                                "Gemini Connection Failed",
-                                MessageBoxButton.OK,
-                                MessageBoxImage.Error);
-                            return;
-                        }
-
-                        processWithGemini = false;
-                        GeminiStatusText.Text = "(Connection failed - recording without Gemini)";
-                        GeminiStatusText.Foreground = System.Windows.Media.Brushes.Orange;
-
-                        MessageBox.Show(
-                            $"Gemini Live API connection failed. Recording will continue with audio capture only.\n\n{errorDetails}",
-                            "Gemini Unavailable",
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Warning);
-                    }
-                }
-                else
-                {
-                    MessageBox.Show(
-                        "Gemini processing is enabled but API key is not configured.\nPlease add your API key in Settings.", 
-                        "API Key Required", 
-                        MessageBoxButton.OK, 
-                        MessageBoxImage.Warning);
                     return;
+                }
+
+                try
+                {
+                    await _streamer.ConnectAsync();
+
+                    using var timeoutCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    await _streamer.WaitForSetupCompleteAsync(timeoutCts.Token);
+
+                    EnsureAnswerWindow();
+
+                    _streamer.OnResponseReceived += (response) =>
+                    {
+                        if (_showTranscript)
+                        {
+                            Dispatcher.Invoke(() => AppendGeminiResponseText(response));
+                        }
+                    };
+
+                    _streamer.OnInputTranscriptReceived += (chunk) =>
+                    {
+                        lock (_sessionTextLock)
+                        {
+                            _sessionTranscript.Append(chunk);
+                        }
+
+                        if (_showTranscript)
+                        {
+                            Dispatcher.Invoke(() => AppendGeminiResponseText(chunk));
+                        }
+                    };
+
+                    _streamer.OnTurnComplete += (fullSentence) =>
+                    {
+                        _ = TryAnswerQuestionAsync(fullSentence);
+                    };
+
+                    GeminiStatusText.Text = "(Connected)";
+                    GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
+                }
+                catch (Exception ex)
+                {
+                    var serverError = _streamer?.LastServerError;
+                    var logPath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
+                    _streamer = null;
+
+                    var errorDetails = ex is TaskCanceledException or OperationCanceledException
+                        ? "Setup timed out after 10 seconds. The Live API may be unavailable or slow to respond."
+                        : ex.Message;
+
+                    if (!string.IsNullOrWhiteSpace(serverError))
+                    {
+                        errorDetails = $"Server Error:\n{serverError}\n\nOriginal Exception: {errorDetails}";
+                    }
+
+                    errorDetails += $"\n\nDebug log: {logPath}";
+
+                    if (!saveAudio)
+                    {
+                        MessageBox.Show(
+                            $"Failed to connect to Live API.\n\n{errorDetails}\n\nEnable Save Audio in Settings or fix the Live API configuration.",
+                            "Live API Connection Failed",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Error);
+                        return;
+                    }
+
+                    processWithLiveApi = false;
+                    GeminiStatusText.Text = "(Connection failed - recording without Live API)";
+                    GeminiStatusText.Foreground = System.Windows.Media.Brushes.Orange;
+
+                    MessageBox.Show(
+                        $"Live API connection failed. Recording will continue with audio capture only.\n\n{errorDetails}",
+                        "Live API Unavailable",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
                 }
             }
 
-            // Create and start audio capturer
-            _capturer = new AudioCapturer(_geminiStreamer, saveLocation, saveAudio, captureMicrophone);
+            _capturer = new AudioCapturer(_streamer, saveLocation, saveAudio, captureMicrophone);
             
             _capturer.OnDeviceSelected += (deviceName) =>
             {
@@ -470,7 +493,6 @@ public partial class MainWindow : Window
                         ? $"{bytesRecorded / 1024} KB"
                         : "N/A (not saving)";
                     
-                    // Simulate audio level (you can enhance this with actual audio analysis)
                     AudioLevelBar.Value = Math.Min(100, (bytesRecorded % 1000) / 10);
                 });
             };
@@ -487,7 +509,7 @@ public partial class MainWindow : Window
 
             _capturer.Start();
 
-            var recordingModeText = (saveAudio, processWithGemini) switch
+            var recordingModeText = (saveAudio, processWithLiveApi) switch
             {
                 (true, true) => "Save & Process",
                 (true, false) => "Save only",
@@ -495,7 +517,6 @@ public partial class MainWindow : Window
                 _ => "Recording"
             };
             
-            // Update UI
             StatusText.Text = $"🔴 Recording... {recordingModeText}";
             StatusText.Foreground = System.Windows.Media.Brushes.Red;
             StartButton.IsEnabled = false;
@@ -515,8 +536,8 @@ public partial class MainWindow : Window
             }
             
             SetGeminiResponseText(_showTranscript
-                ? "Recording started...\n"
-                : "Transcript view is hidden. Detected questions and Gemini answers appear in the Gemini Answers window.\n");
+                ? Properties.Resources.RecordingStartedMessage
+                : Properties.Resources.TranscriptHiddenMessage);
         }
         catch (Exception ex)
         {
@@ -549,9 +570,10 @@ public partial class MainWindow : Window
             }
         }
 
-        if (_geminiStreamer != null)
+        if (_streamer != null)
         {
-            await _geminiStreamer.DisconnectAsync();
+            await _streamer.DisconnectAsync();
+            _streamer = null;
             GeminiStatusText.Text = "(Disconnected)";
             GeminiStatusText.Foreground = System.Windows.Media.Brushes.Gray;
         }
@@ -593,19 +615,27 @@ public partial class MainWindow : Window
     {
         try
         {
-            // Check if API key is configured
+            if (_liveProvider == ProviderOpenAi)
+            {
+                MessageBox.Show(
+                    Properties.Resources.OpenAiFileUploadNotSupported,
+                    "Not Supported",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
             var apiKey = _configuration["Gemini:ApiKey"];
             if (string.IsNullOrWhiteSpace(apiKey) || apiKey == "YOUR_API_KEY_HERE")
             {
                 MessageBox.Show(
-                    "Please configure your Gemini API key in Settings first.", 
-                    "API Key Required", 
-                    MessageBoxButton.OK, 
+                    Properties.Resources.ValidationGeminiApiKeyRequired,
+                    "API Key Required",
+                    MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
 
-            // Open file dialog
             var dialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Select Audio File",
@@ -617,7 +647,6 @@ public partial class MainWindow : Window
             {
                 var filePath = dialog.FileName;
 
-                // Disable buttons during processing
                 StartButton.IsEnabled = false;
                 StopButton.IsEnabled = false;
                 UploadFileButton.IsEnabled = false;
@@ -627,14 +656,13 @@ public partial class MainWindow : Window
                 StatusText.Foreground = System.Windows.Media.Brushes.Orange;
                 SetGeminiResponseText(_showTranscript
                     ? $"Processing: {Path.GetFileName(filePath)}\n\nPlease wait...\n"
-                    : "Transcript view is hidden. Detected questions and Gemini answers appear in the Gemini Answers window.\n");
+                    : Properties.Resources.TranscriptHiddenMessage);
 
-                // Initialize Gemini streamer
-                _geminiStreamer = new GeminiAudioStreamer(apiKey);
-                await _geminiStreamer.ConnectAsync();
+                _streamer = new GeminiAudioStreamer(apiKey);
+                await _streamer.ConnectAsync();
                 EnsureAnswerWindow();
 
-                _geminiStreamer.OnResponseReceived += (response) =>
+                _streamer.OnResponseReceived += (response) =>
                 {
                     if (_showTranscript)
                     {
@@ -642,29 +670,29 @@ public partial class MainWindow : Window
                     }
                 };
 
-                _geminiStreamer.OnInputTranscriptReceived += (transcript) =>
+                _streamer.OnInputTranscriptReceived += (transcript) =>
                 {
                     _ = TryAnswerQuestionAsync(transcript);
                 };
                 _lastTranscriptChunk = string.Empty;
-                // Process the file
-                await _geminiStreamer.ProcessAudioFileAsync(filePath);
 
-                await _geminiStreamer.DisconnectAsync();
+                await _streamer.ProcessAudioFileAsync(filePath);
+
+                await _streamer.DisconnectAsync();
 
                 StatusText.Text = "✅ File processed";
                 StatusText.Foreground = System.Windows.Media.Brushes.Green;
 
                 MessageBox.Show(
-                    $"File processed successfully!\n\nTranscription saved next to the original file.", 
-                    "Success", 
-                    MessageBoxButton.OK, 
+                    "File processed successfully!\n\nTranscription saved next to the original file.",
+                    "Success",
+                    MessageBoxButton.OK,
                     MessageBoxImage.Information);
             }
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Error processing file: {ex.Message}", "Error", 
+            MessageBox.Show($"Error processing file: {ex.Message}", "Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
 
             StatusText.Text = "❌ Error";
@@ -672,7 +700,6 @@ public partial class MainWindow : Window
         }
         finally
         {
-            // Re-enable buttons
             StartButton.IsEnabled = true;
             StopButton.IsEnabled = false;
             UploadFileButton.IsEnabled = true;
@@ -686,6 +713,6 @@ public partial class MainWindow : Window
         base.OnClosed(e);
         _recordingTimer.Stop();
         _capturer?.StopAsync().GetAwaiter().GetResult();
-        _geminiStreamer?.DisconnectAsync().GetAwaiter().GetResult();
+        _streamer?.DisconnectAsync().GetAwaiter().GetResult();
     }
 }
