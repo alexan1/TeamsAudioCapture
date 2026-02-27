@@ -15,10 +15,10 @@ namespace TeamsAudioCapture;
 public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 {
     private const string RealtimeEndpoint = "wss://api.openai.com/v1/realtime";
-    private const string DefaultTranscriptionModel = "gpt-4o-mini-transcribe";
 
     private readonly string _apiKey;
-    private readonly string _model;
+    private readonly string _transcriptionModel;
+    private readonly string _qnaModel;
     private readonly HttpClient _httpClient;
     private readonly StringBuilder _inputTranscriptBuffer = new();
     private ClientWebSocket? _webSocket;
@@ -27,23 +27,30 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
     private bool _isConnected;
     private TaskCompletionSource<bool>? _setupCompletionSource;
 
-    public OpenAiRealtimeStreamer(string apiKey, string model)
+    public OpenAiRealtimeStreamer(string apiKey, string transcriptionModel, string qnaModel)
     {
         ArgumentNullException.ThrowIfNull(apiKey);
-        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(transcriptionModel);
+        ArgumentNullException.ThrowIfNull(qnaModel);
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new ArgumentException("API key is required.", nameof(apiKey));
         }
 
-        if (string.IsNullOrWhiteSpace(model))
+        if (string.IsNullOrWhiteSpace(transcriptionModel))
         {
-            throw new ArgumentException("Model is required.", nameof(model));
+            throw new ArgumentException("Transcription model is required.", nameof(transcriptionModel));
+        }
+
+        if (string.IsNullOrWhiteSpace(qnaModel))
+        {
+            throw new ArgumentException("Q&A model is required.", nameof(qnaModel));
         }
 
         _apiKey = apiKey;
-        _model = model;
+        _transcriptionModel = transcriptionModel;
+        _qnaModel = qnaModel;
         _httpClient = new HttpClient();
     }
 
@@ -122,7 +129,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         {
             var payload = new
             {
-                model = "gpt-4o-mini",
+                model = _qnaModel,
                 input = $"Answer this question briefly and directly:\n\nQuestion: {question}",
                 stream = true
             };
@@ -222,7 +229,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         _webSocket.Options.SetRequestHeader("OpenAI-Beta", "realtime=v1");
         _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var uri = new Uri($"{RealtimeEndpoint}?model={_model}");
+        var uri = new Uri($"{RealtimeEndpoint}?model={_transcriptionModel}");
         await _webSocket.ConnectAsync(uri, ct).ConfigureAwait(false);
 
         _isConnected = true;
@@ -240,7 +247,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
             {
                 modalities = new[] { "text" },
                 instructions = "Provide verbatim transcription of the user audio. Do not answer or summarize.",
-                input_audio_transcription = new { model = DefaultTranscriptionModel },
                 turn_detection = new { type = "server_vad" }
             }
         };

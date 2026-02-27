@@ -14,7 +14,8 @@ public partial class SettingsWindow : Window
 {
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
-    private const string DefaultOpenAiModel = "gpt-4o-mini-realtime-preview";
+    private const string DefaultOpenAiTranscriptionModel = "gpt-4o-mini-realtime-preview";
+    private const string DefaultOpenAiQnaModel = "gpt-4o-mini";
 
     private readonly IConfiguration _configuration;
     private const string LocalSettingsFile = "appsettings.Local.json";
@@ -40,10 +41,20 @@ public partial class SettingsWindow : Window
             OpenAiApiKeyTextBox.Text = openAiApiKey;
         }
 
-        var openAiModel = _configuration["OpenAI:Model"];
-        OpenAiModelTextBox.Text = string.IsNullOrWhiteSpace(openAiModel)
-            ? DefaultOpenAiModel
-            : openAiModel;
+        var openAiTranscriptionModel = _configuration["OpenAI:TranscriptionModel"];
+        if (string.IsNullOrWhiteSpace(openAiTranscriptionModel))
+        {
+            openAiTranscriptionModel = _configuration["OpenAI:Model"];
+        }
+
+        OpenAiTranscriptionModelTextBox.Text = string.IsNullOrWhiteSpace(openAiTranscriptionModel)
+            ? DefaultOpenAiTranscriptionModel
+            : openAiTranscriptionModel;
+
+        var openAiQnaModel = _configuration["OpenAI:QnaModel"];
+        OpenAiQnaModelTextBox.Text = string.IsNullOrWhiteSpace(openAiQnaModel)
+            ? DefaultOpenAiQnaModel
+            : openAiQnaModel;
 
         var liveProvider = _configuration["Recording:LiveProvider"] ?? ProviderGemini;
         foreach (var item in LiveProviderComboBox.Items.OfType<System.Windows.Controls.ComboBoxItem>())
@@ -81,7 +92,8 @@ public partial class SettingsWindow : Window
         {
             var geminiApiKey = ApiKeyTextBox.Text.Trim();
             var openAiApiKey = OpenAiApiKeyTextBox.Text.Trim();
-            var openAiModel = OpenAiModelTextBox.Text.Trim();
+            var openAiTranscriptionModel = OpenAiTranscriptionModelTextBox.Text.Trim();
+            var openAiQnaModel = OpenAiQnaModelTextBox.Text.Trim();
             var saveAudio = SaveAudioCheckBox.IsChecked ?? true;
             var captureMicrophone = CaptureMicrophoneCheckBox.IsChecked ?? false;
             var processWithLiveApi = ProcessWithGeminiCheckBox.IsChecked ?? false;
@@ -110,9 +122,14 @@ public partial class SettingsWindow : Window
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(openAiModel))
+            if (string.IsNullOrWhiteSpace(openAiTranscriptionModel))
             {
-                openAiModel = DefaultOpenAiModel;
+                openAiTranscriptionModel = DefaultOpenAiTranscriptionModel;
+            }
+
+            if (string.IsNullOrWhiteSpace(openAiQnaModel))
+            {
+                openAiQnaModel = DefaultOpenAiQnaModel;
             }
 
             if (string.IsNullOrWhiteSpace(saveLocation))
@@ -131,7 +148,9 @@ public partial class SettingsWindow : Window
                 OpenAI = new
                 {
                     ApiKey = string.IsNullOrWhiteSpace(openAiApiKey) ? "YOUR_API_KEY_HERE" : openAiApiKey,
-                    Model = openAiModel
+                    Model = openAiTranscriptionModel,
+                    TranscriptionModel = openAiTranscriptionModel,
+                    QnaModel = openAiQnaModel
                 },
                 Recording = new
                 {

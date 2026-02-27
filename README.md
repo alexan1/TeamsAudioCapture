@@ -89,6 +89,8 @@ The settings are stored locally in `appsettings.Local.json` and are git-ignored 
 Click **Settings** to configure:
 
 - **Gemini API Key**: For AI transcription and analysis
+- **OpenAI transcription model**: Model used for OpenAI realtime transcription
+- **OpenAI Q&A model**: Model used to answer detected questions
 - **Save Audio**: Enable/disable saving to WAV files
 - **Capture Microphone**: Include your voice (system audio always captured)
 - **Process with Gemini**: Enable real-time AI processing

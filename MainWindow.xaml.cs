@@ -14,7 +14,8 @@ public partial class MainWindow : Window
 {
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
-    private const string DefaultOpenAiModel = "gpt-4o-mini-realtime-preview";
+    private const string DefaultOpenAiTranscriptionModel = "gpt-4o-mini-realtime-preview";
+    private const string DefaultOpenAiQnaModel = "gpt-4o-mini";
 
     private AudioCapturer? _capturer;
     private ILiveAudioStreamer? _streamer;
@@ -349,13 +350,24 @@ public partial class MainWindow : Window
                 return null;
             }
 
-            var model = _configuration["OpenAI:Model"];
-            if (string.IsNullOrWhiteSpace(model))
+            var transcriptionModel = _configuration["OpenAI:TranscriptionModel"];
+            if (string.IsNullOrWhiteSpace(transcriptionModel))
             {
-                model = DefaultOpenAiModel;
+                transcriptionModel = _configuration["OpenAI:Model"];
             }
 
-            return new OpenAiRealtimeStreamer(apiKey, model);
+            if (string.IsNullOrWhiteSpace(transcriptionModel))
+            {
+                transcriptionModel = DefaultOpenAiTranscriptionModel;
+            }
+
+            var qnaModel = _configuration["OpenAI:QnaModel"];
+            if (string.IsNullOrWhiteSpace(qnaModel))
+            {
+                qnaModel = DefaultOpenAiQnaModel;
+            }
+
+            return new OpenAiRealtimeStreamer(apiKey, transcriptionModel, qnaModel);
         }
 
         var geminiKey = _configuration["Gemini:ApiKey"];
