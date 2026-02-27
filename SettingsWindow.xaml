@@ -111,14 +111,24 @@
                             </Hyperlink>
                         </TextBlock>
 
-                        <TextBlock Text="{x:Static properties:Resources.SettingsOpenAiModelLabel}" FontWeight="Bold" Margin="0,0,0,5"/>
-                        <TextBox x:Name="OpenAiModelTextBox" 
+                        <TextBlock Text="OpenAI transcription model (realtime)" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBox x:Name="OpenAiTranscriptionModelTextBox" 
+                                 Padding="8"
+                                 FontFamily="Consolas"
+                                 FontSize="12"
+                                 Margin="0,0,0,5"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="#999" FontSize="11" Margin="0,0,0,8">
+                            Example: gpt-4o-mini-realtime-preview
+                        </TextBlock>
+
+                        <TextBlock Text="OpenAI Q&amp;A model" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBox x:Name="OpenAiQnaModelTextBox" 
                                  Padding="8"
                                  FontFamily="Consolas"
                                  FontSize="12"
                                  Margin="0,0,0,5"/>
                         <TextBlock TextWrapping="Wrap" Foreground="#999" FontSize="11">
-                            {x:Static properties:Resources.SettingsOpenAiModelHelp}
+                            Example: gpt-4o-mini
                         </TextBlock>
                     </StackPanel>
                 </Border>
