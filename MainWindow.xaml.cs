@@ -14,8 +14,6 @@ public partial class MainWindow : Window
 {
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
-    private const string DefaultOpenAiTranscriptionModel = "gpt-4o-mini-realtime-preview";
-    private const string DefaultOpenAiQnaModel = "gpt-4o-mini";
 
     private AudioCapturer? _capturer;
     private ILiveAudioStreamer? _streamer;
@@ -31,11 +29,12 @@ public partial class MainWindow : Window
     private string _lastTranscriptChunk = string.Empty;
     private DispatcherTimer _recordingTimer;
     private DateTime _recordingStartTime;
-    private IConfiguration _configuration = null!;
+    private readonly IConfiguration _configuration;
 
-    public MainWindow()
+    public MainWindow(IConfiguration configuration)
     {
         InitializeComponent();
+        _configuration = configuration;
         LoadConfiguration();
         
         _recordingTimer = new DispatcherTimer
@@ -47,17 +46,19 @@ public partial class MainWindow : Window
 
     private void LoadConfiguration()
     {
-        _configuration = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile("appsettings.Local.json", optional: true)
-            .Build();
+        var selectedProviderName = _configuration["Transcription:SelectedProvider"];
+        var providerType = selectedProviderName is null
+            ? null
+            : _configuration[$"Transcription:Providers:{selectedProviderName}:Provider"];
 
-        _liveProvider = _configuration["Recording:LiveProvider"] ?? ProviderGemini;
+        _liveProvider = string.IsNullOrWhiteSpace(providerType)
+            ? (_configuration["Recording:LiveProvider"] ?? ProviderGemini)
+            : providerType;
+
         var processWithLiveApi = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
         var apiKey = _liveProvider == ProviderOpenAi
-            ? _configuration["OpenAI:ApiKey"]
-            : _configuration["Gemini:ApiKey"];
+            ? _configuration["ApiKeys:OpenAI"]
+            : _configuration["ApiKeys:Gemini"];
 
         if (processWithLiveApi && !string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
         {
@@ -335,11 +336,35 @@ public partial class MainWindow : Window
         _answerWindow.Show();
     }
 
-    private ILiveAudioStreamer? CreateStreamerForProvider(string liveProvider)
+    private ILiveAudioStreamer? CreateStreamerForProvider()
     {
+        var selectedProviderName = _configuration["Transcription:SelectedProvider"];
+        if (string.IsNullOrWhiteSpace(selectedProviderName))
+        {
+            MessageBox.Show(
+                "No transcription provider is selected.",
+                "Configuration Error",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return null;
+        }
+
+        var providerRoot = $"Transcription:Providers:{selectedProviderName}";
+        var liveProvider = _configuration[$"{providerRoot}:Provider"];
+
+        if (string.IsNullOrWhiteSpace(liveProvider))
+        {
+            MessageBox.Show(
+                $"Selected transcription provider '{selectedProviderName}' is not configured.",
+                "Configuration Error",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return null;
+        }
+
         if (string.Equals(liveProvider, ProviderOpenAi, StringComparison.OrdinalIgnoreCase))
         {
-            var apiKey = _configuration["OpenAI:ApiKey"];
+            var apiKey = _configuration["ApiKeys:OpenAI"];
             if (string.IsNullOrWhiteSpace(apiKey) || apiKey == "YOUR_API_KEY_HERE")
             {
                 MessageBox.Show(
@@ -350,27 +375,26 @@ public partial class MainWindow : Window
                 return null;
             }
 
-            var transcriptionModel = _configuration["OpenAI:TranscriptionModel"];
-            if (string.IsNullOrWhiteSpace(transcriptionModel))
-            {
-                transcriptionModel = _configuration["OpenAI:Model"];
-            }
+            var transcriptionModel = _configuration[$"{providerRoot}:Model"];
+            var selectedQaModel = _configuration["QA:SelectedModel"];
+            var qnaModel = string.IsNullOrWhiteSpace(selectedQaModel)
+                ? null
+                : _configuration[$"QA:Models:{selectedQaModel}:Model"];
 
-            if (string.IsNullOrWhiteSpace(transcriptionModel))
+            if (string.IsNullOrWhiteSpace(transcriptionModel) || string.IsNullOrWhiteSpace(qnaModel))
             {
-                transcriptionModel = DefaultOpenAiTranscriptionModel;
-            }
-
-            var qnaModel = _configuration["OpenAI:QnaModel"];
-            if (string.IsNullOrWhiteSpace(qnaModel))
-            {
-                qnaModel = DefaultOpenAiQnaModel;
+                MessageBox.Show(
+                    "OpenAI transcription or QA model is missing in configuration.",
+                    "Configuration Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return null;
             }
 
             return new OpenAiRealtimeStreamer(apiKey, transcriptionModel, qnaModel);
         }
 
-        var geminiKey = _configuration["Gemini:ApiKey"];
+        var geminiKey = _configuration["ApiKeys:Gemini"];
         if (string.IsNullOrWhiteSpace(geminiKey) || geminiKey == "YOUR_API_KEY_HERE")
         {
             MessageBox.Show(
@@ -393,7 +417,10 @@ public partial class MainWindow : Window
             var captureMicrophone = _configuration.GetValue<bool>("Recording:CaptureMicrophone", false);
             var saveLocation = _configuration["Recording:AudioSaveLocation"];
             _saveAudio = saveAudio;
-            _liveProvider = _configuration["Recording:LiveProvider"] ?? ProviderGemini;
+            var selectedProviderName = _configuration["Transcription:SelectedProvider"];
+            _liveProvider = string.IsNullOrWhiteSpace(selectedProviderName)
+                ? (_configuration["Recording:LiveProvider"] ?? ProviderGemini)
+                : (_configuration[$"Transcription:Providers:{selectedProviderName}:Provider"] ?? ProviderGemini);
 
             if (!saveAudio && !processWithLiveApi)
             {
@@ -407,7 +434,7 @@ public partial class MainWindow : Window
 
             if (processWithLiveApi)
             {
-                _streamer = CreateStreamerForProvider(_liveProvider);
+                _streamer = CreateStreamerForProvider();
                 if (_streamer == null)
                 {
                     return;
@@ -637,7 +664,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var apiKey = _configuration["Gemini:ApiKey"];
+            var apiKey = _configuration["ApiKeys:Gemini"];
             if (string.IsNullOrWhiteSpace(apiKey) || apiKey == "YOUR_API_KEY_HERE")
             {
                 MessageBox.Show(

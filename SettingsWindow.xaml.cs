@@ -12,11 +12,6 @@ namespace TeamsAudioCapture;
 
 public partial class SettingsWindow : Window
 {
-    private const string ProviderGemini = "Gemini";
-    private const string ProviderOpenAi = "OpenAI";
-    private const string DefaultOpenAiTranscriptionModel = "gpt-4o-mini-realtime-preview";
-    private const string DefaultOpenAiQnaModel = "gpt-4o-mini";
-
     private readonly IConfiguration _configuration;
     private const string LocalSettingsFile = "appsettings.Local.json";
 
@@ -29,47 +24,27 @@ public partial class SettingsWindow : Window
 
     private void LoadSettings()
     {
-        var geminiApiKey = _configuration["Gemini:ApiKey"];
-        if (!string.IsNullOrWhiteSpace(geminiApiKey) && geminiApiKey != "YOUR_API_KEY_HERE")
+        PopulateComboBoxFromSectionKeys(TranscriptionProviderComboBox, "Transcription:Providers");
+        PopulateComboBoxFromSectionKeys(QAModelComboBox, "QA:Models");
+
+        SelectComboBoxItem(TranscriptionProviderComboBox, _configuration["Transcription:SelectedProvider"]);
+        SelectComboBoxItem(QAModelComboBox, _configuration["QA:SelectedModel"]);
+
+        if (TranscriptionProviderComboBox.SelectedItem == null && TranscriptionProviderComboBox.Items.Count > 0)
         {
-            ApiKeyTextBox.Text = geminiApiKey;
+            TranscriptionProviderComboBox.SelectedIndex = 0;
         }
 
-        var openAiApiKey = _configuration["OpenAI:ApiKey"];
-        if (!string.IsNullOrWhiteSpace(openAiApiKey) && openAiApiKey != "YOUR_API_KEY_HERE")
+        if (QAModelComboBox.SelectedItem == null && QAModelComboBox.Items.Count > 0)
         {
-            OpenAiApiKeyTextBox.Text = openAiApiKey;
+            QAModelComboBox.SelectedIndex = 0;
         }
 
-        var openAiTranscriptionModel = _configuration["OpenAI:TranscriptionModel"];
-        if (string.IsNullOrWhiteSpace(openAiTranscriptionModel))
-        {
-            openAiTranscriptionModel = _configuration["OpenAI:Model"];
-        }
-
-        OpenAiTranscriptionModelTextBox.Text = string.IsNullOrWhiteSpace(openAiTranscriptionModel)
-            ? DefaultOpenAiTranscriptionModel
-            : openAiTranscriptionModel;
-
-        var openAiQnaModel = _configuration["OpenAI:QnaModel"];
-        OpenAiQnaModelTextBox.Text = string.IsNullOrWhiteSpace(openAiQnaModel)
-            ? DefaultOpenAiQnaModel
-            : openAiQnaModel;
-
-        var liveProvider = _configuration["Recording:LiveProvider"] ?? ProviderGemini;
-        foreach (var item in LiveProviderComboBox.Items.OfType<System.Windows.Controls.ComboBoxItem>())
-        {
-            if (string.Equals(item.Tag as string, liveProvider, StringComparison.OrdinalIgnoreCase))
-            {
-                LiveProviderComboBox.SelectedItem = item;
-                break;
-            }
-        }
-
-        if (LiveProviderComboBox.SelectedItem == null && LiveProviderComboBox.Items.Count > 0)
-        {
-            LiveProviderComboBox.SelectedIndex = 0;
-        }
+        DeepgramApiKeyTextBox.Text = _configuration["ApiKeys:Deepgram"] ?? string.Empty;
+        ApiKeyTextBox.Text = _configuration["ApiKeys:Gemini"] ?? string.Empty;
+        OpenAiApiKeyTextBox.Text = _configuration["ApiKeys:OpenAI"] ?? string.Empty;
+        ClaudeApiKeyTextBox.Text = _configuration["ApiKeys:Claude"] ?? string.Empty;
+        MercuryApiKeyTextBox.Text = _configuration["ApiKeys:Mercury"] ?? string.Empty;
 
         var saveAudio = _configuration.GetValue<bool>("Recording:SaveAudio", true);
         var captureMicrophone = _configuration.GetValue<bool>("Recording:CaptureMicrophone", false);
@@ -90,16 +65,18 @@ public partial class SettingsWindow : Window
     {
         try
         {
+            var deepgramApiKey = DeepgramApiKeyTextBox.Text.Trim();
             var geminiApiKey = ApiKeyTextBox.Text.Trim();
             var openAiApiKey = OpenAiApiKeyTextBox.Text.Trim();
-            var openAiTranscriptionModel = OpenAiTranscriptionModelTextBox.Text.Trim();
-            var openAiQnaModel = OpenAiQnaModelTextBox.Text.Trim();
+            var claudeApiKey = ClaudeApiKeyTextBox.Text.Trim();
+            var mercuryApiKey = MercuryApiKeyTextBox.Text.Trim();
             var saveAudio = SaveAudioCheckBox.IsChecked ?? true;
             var captureMicrophone = CaptureMicrophoneCheckBox.IsChecked ?? false;
             var processWithLiveApi = ProcessWithGeminiCheckBox.IsChecked ?? false;
             var showTranscript = ShowTranscriptCheckBox.IsChecked ?? false;
             var saveLocation = SaveLocationTextBox.Text.Trim();
-            var selectedProvider = (LiveProviderComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? ProviderGemini;
+            var selectedTranscriptionProvider = TranscriptionProviderComboBox.SelectedItem as string ?? string.Empty;
+            var selectedQaModel = QAModelComboBox.SelectedItem as string ?? string.Empty;
 
             if (!saveAudio && !processWithLiveApi)
             {
@@ -108,28 +85,33 @@ public partial class SettingsWindow : Window
                 return;
             }
 
-            if (processWithLiveApi && string.Equals(selectedProvider, ProviderOpenAi, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(openAiApiKey))
+            if (string.IsNullOrWhiteSpace(selectedTranscriptionProvider) || string.IsNullOrWhiteSpace(selectedQaModel))
+            {
+                MessageBox.Show("Please select both a transcription provider and a Q/A model.",
+                    "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var selectedProviderType = _configuration[$"Transcription:Providers:{selectedTranscriptionProvider}:Provider"];
+            if (processWithLiveApi && string.Equals(selectedProviderType, "OpenAI", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(openAiApiKey))
             {
                 MessageBox.Show(Properties.Resources.ValidationOpenAiApiKeyRequired,
                     "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            if (processWithLiveApi && string.Equals(selectedProvider, ProviderGemini, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(geminiApiKey))
+            if (processWithLiveApi && string.Equals(selectedProviderType, "Gemini", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(geminiApiKey))
             {
                 MessageBox.Show(Properties.Resources.ValidationGeminiApiKeyRequired,
                     "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(openAiTranscriptionModel))
+            if (processWithLiveApi && string.Equals(selectedProviderType, "Deepgram", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(deepgramApiKey))
             {
-                openAiTranscriptionModel = DefaultOpenAiTranscriptionModel;
-            }
-
-            if (string.IsNullOrWhiteSpace(openAiQnaModel))
-            {
-                openAiQnaModel = DefaultOpenAiQnaModel;
+                MessageBox.Show("Deepgram API key is required when using Deepgram live transcription.",
+                    "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
             }
 
             if (string.IsNullOrWhiteSpace(saveLocation))
@@ -141,16 +123,21 @@ public partial class SettingsWindow : Window
 
             var settings = new
             {
-                Gemini = new
+                ApiKeys = new
                 {
-                    ApiKey = string.IsNullOrWhiteSpace(geminiApiKey) ? "YOUR_API_KEY_HERE" : geminiApiKey
+                    Deepgram = deepgramApiKey,
+                    Gemini = geminiApiKey,
+                    OpenAI = openAiApiKey,
+                    Claude = claudeApiKey,
+                    Mercury = mercuryApiKey
                 },
-                OpenAI = new
+                Transcription = new
                 {
-                    ApiKey = string.IsNullOrWhiteSpace(openAiApiKey) ? "YOUR_API_KEY_HERE" : openAiApiKey,
-                    Model = openAiTranscriptionModel,
-                    TranscriptionModel = openAiTranscriptionModel,
-                    QnaModel = openAiQnaModel
+                    SelectedProvider = selectedTranscriptionProvider
+                },
+                QA = new
+                {
+                    SelectedModel = selectedQaModel
                 },
                 Recording = new
                 {
@@ -159,7 +146,7 @@ public partial class SettingsWindow : Window
                     ShowTranscript = showTranscript,
                     AudioSaveLocation = saveLocation,
                     CaptureMicrophone = captureMicrophone,
-                    LiveProvider = selectedProvider
+                    LiveProvider = selectedProviderType
                 }
             };
 
@@ -218,5 +205,32 @@ public partial class SettingsWindow : Window
             UseShellExecute = true
         });
         e.Handled = true;
+    }
+
+    private void PopulateComboBoxFromSectionKeys(System.Windows.Controls.ComboBox comboBox, string sectionPath)
+    {
+        comboBox.Items.Clear();
+        var keys = _configuration.GetSection(sectionPath).GetChildren().Select(c => c.Key);
+        foreach (var key in keys)
+        {
+            comboBox.Items.Add(key);
+        }
+    }
+
+    private static void SelectComboBoxItem(System.Windows.Controls.ComboBox comboBox, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        foreach (var item in comboBox.Items)
+        {
+            if (string.Equals(item as string, value, StringComparison.Ordinal))
+            {
+                comboBox.SelectedItem = item;
+                return;
+            }
+        }
     }
 }
