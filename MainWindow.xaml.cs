@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -14,6 +14,7 @@ public partial class MainWindow : Window
 {
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
+    private const string ProviderDeepgram = "Deepgram";
 
     private AudioCapturer? _capturer;
     private ILiveAudioStreamer? _streamer;
@@ -56,9 +57,12 @@ public partial class MainWindow : Window
             : providerType;
 
         var processWithLiveApi = _configuration.GetValue<bool>("Recording:ProcessWithGemini", false);
-        var apiKey = _liveProvider == ProviderOpenAi
-            ? _configuration["ApiKeys:OpenAI"]
-            : _configuration["ApiKeys:Gemini"];
+        var apiKey = _liveProvider switch
+        {
+            ProviderOpenAi => _configuration["ApiKeys:OpenAI"],
+            ProviderDeepgram => _configuration["ApiKeys:Deepgram"],
+            _ => _configuration["ApiKeys:Gemini"]
+        };
 
         if (processWithLiveApi && !string.IsNullOrWhiteSpace(apiKey) && apiKey != "YOUR_API_KEY_HERE")
         {
@@ -81,10 +85,10 @@ public partial class MainWindow : Window
         ShowTranscriptRuntimeCheckBox.IsChecked = _showTranscript;
         var mode = (saveAudio, processWithLiveApi) switch
         {
-            (true, true) => "💾+🤖 Save & Process",
-            (true, false) => "💾 Save Only",
-            (false, true) => "🤖 Process Only",
-            _ => "⚠️ Not Configured"
+            (true, true) => "ðŸ’¾+ðŸ¤– Save & Process",
+            (true, false) => "ðŸ’¾ Save Only",
+            (false, true) => "ðŸ¤– Process Only",
+            _ => "âš ï¸ Not Configured"
         };
 
         Title = $"Teams Audio Capture - {mode}";
@@ -231,19 +235,19 @@ public partial class MainWindow : Window
         var question = ExtractQuestion(transcriptChunk);
         if (string.IsNullOrWhiteSpace(question))
         {
-            Console.WriteLine($"🔍 No question detected in: {transcriptChunk[..Math.Min(50, transcriptChunk.Length)]}...");
+            Console.WriteLine($"ðŸ” No question detected in: {transcriptChunk[..Math.Min(50, transcriptChunk.Length)]}...");
             return;
         }
 
-        Console.WriteLine($"❓ Question detected: {question}");
+        Console.WriteLine($"â“ Question detected: {question}");
 
         if (!_answeredQuestions.Add(question))
         {
-            Console.WriteLine($"⏭️ Question already answered: {question}");
+            Console.WriteLine($"â­ï¸ Question already answered: {question}");
             return;
         }
 
-        // Show question header immediately — no waiting for the answer
+        // Show question header immediately â€” no waiting for the answer
         await Dispatcher.InvokeAsync(() =>
         {
             EnsureAnswerWindow();
@@ -362,6 +366,8 @@ public partial class MainWindow : Window
             return null;
         }
 
+        System.Diagnostics.Debug.WriteLine($"CreateStreamerForProvider: Selected provider = {selectedProviderName}, Provider type = {liveProvider}");
+
         if (string.Equals(liveProvider, ProviderOpenAi, StringComparison.OrdinalIgnoreCase))
         {
             var apiKey = _configuration["ApiKeys:OpenAI"];
@@ -391,7 +397,41 @@ public partial class MainWindow : Window
                 return null;
             }
 
+            System.Diagnostics.Debug.WriteLine($"Creating OpenAiRealtimeStreamer with model: {transcriptionModel}");
             return new OpenAiRealtimeStreamer(apiKey, transcriptionModel, qnaModel);
+        }
+
+        if (string.Equals(liveProvider, ProviderDeepgram, StringComparison.OrdinalIgnoreCase))
+        {
+            var apiKey = _configuration["ApiKeys:Deepgram"];
+            if (string.IsNullOrWhiteSpace(apiKey) || apiKey == "YOUR_API_KEY_HERE")
+            {
+                MessageBox.Show(
+                    "Deepgram API key is required. Please set it in Settings.",
+                    "API Key Required",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return null;
+            }
+
+            var transcriptionModel = _configuration[$"{providerRoot}:Model"];
+            var selectedQaModel = _configuration["QA:SelectedModel"];
+            var qnaModel = string.IsNullOrWhiteSpace(selectedQaModel)
+                ? null
+                : _configuration[$"QA:Models:{selectedQaModel}:Model"];
+
+            if (string.IsNullOrWhiteSpace(transcriptionModel) || string.IsNullOrWhiteSpace(qnaModel))
+            {
+                MessageBox.Show(
+                    "Deepgram transcription or QA model is missing in configuration.",
+                    "Configuration Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return null;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"Creating DeepgramAudioStreamer with model: {transcriptionModel}");
+            return new DeepgramAudioStreamer(apiKey, transcriptionModel, qnaModel);
         }
 
         var geminiKey = _configuration["ApiKeys:Gemini"];
@@ -405,6 +445,7 @@ public partial class MainWindow : Window
             return null;
         }
 
+        System.Diagnostics.Debug.WriteLine("Creating GeminiAudioStreamer (default)");
         return new GeminiAudioStreamer(geminiKey);
     }
 
@@ -440,6 +481,61 @@ public partial class MainWindow : Window
                     return;
                 }
 
+                // Subscribe to events BEFORE connecting
+                _streamer.OnResponseReceived += (response) =>
+                {
+                    if (_showTranscript)
+                    {
+                        Dispatcher.Invoke(() => AppendGeminiResponseText(response));
+                    }
+                };
+
+                _streamer.OnInputTranscriptReceived += (chunk) =>
+                {
+                    lock (_sessionTextLock)
+                    {
+                        _sessionTranscript.Append(chunk);
+                    }
+
+                    if (_showTranscript)
+                    {
+                        Dispatcher.Invoke(() => AppendGeminiResponseText(chunk));
+                    }
+                };
+
+                _streamer.OnTurnComplete += (fullSentence) =>
+                {
+                    _ = TryAnswerQuestionAsync(fullSentence);
+                };
+
+                _streamer.OnError += (errorMessage) =>
+                {
+                    try
+                    {
+                        if (Dispatcher.CheckAccess())
+                        {
+                            GeminiStatusText.Text = "(Error)";
+                            GeminiStatusText.Foreground = System.Windows.Media.Brushes.Red;
+                            SetGeminiResponseText($"⚠️ ERROR\n\n{errorMessage}");
+                        }
+                        else
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                GeminiStatusText.Text = "(Error)";
+                                GeminiStatusText.Foreground = System.Windows.Media.Brushes.Red;
+                                SetGeminiResponseText($"⚠️ ERROR\n\n{errorMessage}");
+                            });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Fallback: If UI update fails, at least log it
+                        Console.WriteLine($"⚠️ Failed to update UI with error: {errorMessage}");
+                        Console.WriteLine($"UI update error: {ex.Message}");
+                    }
+                };
+
                 try
                 {
                     await _streamer.ConnectAsync();
@@ -449,39 +545,13 @@ public partial class MainWindow : Window
 
                     EnsureAnswerWindow();
 
-                    _streamer.OnResponseReceived += (response) =>
-                    {
-                        if (_showTranscript)
-                        {
-                            Dispatcher.Invoke(() => AppendGeminiResponseText(response));
-                        }
-                    };
-
-                    _streamer.OnInputTranscriptReceived += (chunk) =>
-                    {
-                        lock (_sessionTextLock)
-                        {
-                            _sessionTranscript.Append(chunk);
-                        }
-
-                        if (_showTranscript)
-                        {
-                            Dispatcher.Invoke(() => AppendGeminiResponseText(chunk));
-                        }
-                    };
-
-                    _streamer.OnTurnComplete += (fullSentence) =>
-                    {
-                        _ = TryAnswerQuestionAsync(fullSentence);
-                    };
-
                     GeminiStatusText.Text = "(Connected)";
                     GeminiStatusText.Foreground = System.Windows.Media.Brushes.Green;
                 }
                 catch (Exception ex)
                 {
                     var serverError = _streamer?.LastServerError;
-                    var logPath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
+                    var logPath = Path.Combine(Path.GetTempPath(), "DeepgramDebug.log");
                     _streamer = null;
 
                     var errorDetails = ex is TaskCanceledException or OperationCanceledException
@@ -556,7 +626,7 @@ public partial class MainWindow : Window
                 _ => "Recording"
             };
             
-            StatusText.Text = $"🔴 Recording... {recordingModeText}";
+            StatusText.Text = $"ðŸ”´ Recording... {recordingModeText}";
             StatusText.Foreground = System.Windows.Media.Brushes.Red;
             StartButton.IsEnabled = false;
             StopButton.IsEnabled = true;
@@ -664,6 +734,16 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (_liveProvider == ProviderDeepgram)
+            {
+                MessageBox.Show(
+                    "Deepgram file upload not yet implemented.",
+                    "Not Supported",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
             var apiKey = _configuration["ApiKeys:Gemini"];
             if (string.IsNullOrWhiteSpace(apiKey) || apiKey == "YOUR_API_KEY_HERE")
             {
@@ -713,6 +793,17 @@ public partial class MainWindow : Window
                 {
                     _ = TryAnswerQuestionAsync(transcript);
                 };
+
+                _streamer.OnError += (errorMessage) =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        StatusText.Text = "❌ File processing failed";
+                        StatusText.Foreground = System.Windows.Media.Brushes.Red;
+                        SetGeminiResponseText($"⚠️ ERROR\n\n{errorMessage}");
+                    });
+                };
+
                 _lastTranscriptChunk = string.Empty;
 
                 await _streamer.ProcessAudioFileAsync(filePath);
@@ -734,7 +825,7 @@ public partial class MainWindow : Window
             MessageBox.Show($"Error processing file: {ex.Message}", "Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
 
-            StatusText.Text = "❌ Error";
+            StatusText.Text = "âŒ Error";
             StatusText.Foreground = System.Windows.Media.Brushes.Red;
         }
         finally
@@ -755,3 +846,260 @@ public partial class MainWindow : Window
         _streamer?.DisconnectAsync().GetAwaiter().GetResult();
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
