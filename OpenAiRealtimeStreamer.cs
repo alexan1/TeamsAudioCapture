@@ -66,6 +66,9 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
     /// <summary>Raised when a full input turn has completed.</summary>
     public event Action<string>? OnTurnComplete;
 
+    /// <summary>Raised when an error occurs in the live provider.</summary>
+    public event Action<string>? OnError;
+
     /// <summary>Connects to the OpenAI Realtime API and initializes the session.</summary>
     public async Task ConnectAsync()
     {
@@ -145,16 +148,18 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
             {
                 var error = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 LastServerError = error;
-                Log($"❌ OpenAI response error ({response.StatusCode}): {error}");
+                var errorMsg = $"❌ OpenAI response error ({response.StatusCode}): {error}";
+                Log(errorMsg);
+                OnError?.Invoke(errorMsg);
                 return;
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             using var reader = new StreamReader(stream);
 
-            while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+            string? line;
+            while ((line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false)) != null && !cancellationToken.IsCancellationRequested)
             {
-                var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data: ", StringComparison.Ordinal))
                 {
                     continue;
@@ -175,7 +180,9 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         catch (Exception ex)
         {
             LastServerError = ex.Message;
-            Log($"❌ OpenAI streaming error: {ex.Message}");
+            var errorMsg = $"❌ OpenAI streaming error: {ex.Message}";
+            Log(errorMsg);
+            OnError?.Invoke(errorMsg);
         }
     }
 

@@ -22,7 +22,6 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
     private WaveFormat? _currentWaveFormat;
     private TaskCompletionSource<bool>? _setupCompletionSource;
     private DateTime _lastTranscriptionTime;
-    private bool _liveConnectFailed;
     private static readonly string LogFilePath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
 
     public string? LastServerError { get; private set; }
@@ -30,6 +29,7 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
     public event Action<string>? OnResponseReceived;
     public event Action<string>? OnInputTranscriptReceived;
     public event Action<string>? OnTurnComplete;
+    public event Action<string>? OnError;
 
     private readonly System.Text.StringBuilder _inputTranscriptBuffer = new();
 
@@ -469,7 +469,7 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
                 LastServerError = errorMessage;
                 Log($"❌ Gemini error: {errorMessage}");
                 _setupCompletionSource?.TrySetException(new InvalidOperationException($"Gemini Live API error: {errorMessage}"));
-                _liveConnectFailed = true;
+                OnError?.Invoke(errorMessage);
             }
 
             // Log unknown message types for debugging
@@ -628,16 +628,18 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync(tokenToUse);
-                Log($"❌ Gemini streaming QA error ({response.StatusCode}): {error}");
+                var errorMsg = $"❌ Gemini Q&A error ({response.StatusCode}): {error}";
+                Log(errorMsg);
+                OnError?.Invoke(errorMsg);
                 return;
             }
 
             using var stream = await response.Content.ReadAsStreamAsync(tokenToUse);
             using var reader = new StreamReader(stream);
 
-            while (!reader.EndOfStream && !tokenToUse.IsCancellationRequested)
+            string? line;
+            while ((line = await reader.ReadLineAsync(tokenToUse)) != null && !tokenToUse.IsCancellationRequested)
             {
-                var line = await reader.ReadLineAsync(tokenToUse);
                 if (string.IsNullOrEmpty(line) || !line.StartsWith("data: "))
                     continue;
 
@@ -666,7 +668,9 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            Log($"❌ Error streaming answer: {ex.Message}");
+            var errorMsg = $"❌ Error streaming answer: {ex.Message}";
+            Log(errorMsg);
+            OnError?.Invoke(errorMsg);
         }
     }
 
@@ -720,7 +724,9 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync(tokenToUse);
-                Log($"❌ Gemini QA API error ({response.StatusCode}): {error}");
+                var errorMsg = $"❌ Gemini Q&A error ({response.StatusCode}): {error}";
+                Log(errorMsg);
+                OnError?.Invoke(errorMsg);
                 return null;
             }
 
@@ -816,6 +822,501 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
         _httpClient?.Dispose();
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

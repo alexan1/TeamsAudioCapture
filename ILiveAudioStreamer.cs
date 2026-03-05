@@ -19,6 +19,9 @@ public interface ILiveAudioStreamer
     /// <summary>Raised when a full input turn has completed.</summary>
     event Action<string>? OnTurnComplete;
 
+    /// <summary>Raised when an error occurs in the live provider.</summary>
+    event Action<string>? OnError;
+
     /// <summary>Connects to the live API and initializes the session.</summary>
     Task ConnectAsync();
 
