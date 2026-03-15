@@ -14,9 +14,11 @@ public partial class App : System.Windows.Application
 		_host = Host.CreateDefaultBuilder()
 			.ConfigureAppConfiguration((context, config) =>
 			{
+				var localSettingsPath = LocalSettingsPath.GetPath();
+
 				config.SetBasePath(AppContext.BaseDirectory);
 				config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
-				config.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+				config.AddJsonFile(localSettingsPath, optional: true, reloadOnChange: true);
 			})
 			.ConfigureServices((context, services) =>
 			{

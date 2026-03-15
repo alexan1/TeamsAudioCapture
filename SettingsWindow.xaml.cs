@@ -13,7 +13,6 @@ namespace TeamsAudioCapture;
 public partial class SettingsWindow : Window
 {
     private readonly IConfiguration _configuration;
-    private const string LocalSettingsFile = "appsettings.Local.json";
 
     public SettingsWindow(IConfiguration configuration)
     {
@@ -119,7 +118,12 @@ public partial class SettingsWindow : Window
                 saveLocation = "";
             }
 
-            var localSettingsPath = Path.Combine(Directory.GetCurrentDirectory(), LocalSettingsFile);
+            var localSettingsPath = LocalSettingsPath.GetPath();
+            var localSettingsDirectory = Path.GetDirectoryName(localSettingsPath);
+            if (!string.IsNullOrWhiteSpace(localSettingsDirectory))
+            {
+                Directory.CreateDirectory(localSettingsDirectory);
+            }
 
             var settings = new
             {
@@ -156,12 +160,6 @@ public partial class SettingsWindow : Window
             });
 
             File.WriteAllText(localSettingsPath, json);
-
-            var binPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, LocalSettingsFile);
-            if (Path.GetFullPath(localSettingsPath) != Path.GetFullPath(binPath))
-            {
-                File.WriteAllText(binPath, json);
-            }
 
             MessageBox.Show("Settings saved successfully!", "Success",
                 MessageBoxButton.OK, MessageBoxImage.Information);
