@@ -15,6 +15,7 @@ namespace TeamsAudioCapture;
 public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 {
     private const string RealtimeEndpoint = "wss://api.openai.com/v1/realtime";
+    private const string DefaultInputTranscriptionModel = "gpt-4o-mini-transcribe";
     private const string RealtimeModelReplacement = "gpt-realtime-1.5";
     private const string AudioModelReplacement = "gpt-audio-1.5";
 
@@ -235,6 +236,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         _webSocket?.Dispose();
         _webSocket = new ClientWebSocket();
         _webSocket.Options.SetRequestHeader("Authorization", $"Bearer {_apiKey}");
+        _webSocket.Options.SetRequestHeader("OpenAI-Beta", "realtime=v1");
         _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var uri = new Uri($"{RealtimeEndpoint}?model={_transcriptionModel}");
@@ -275,6 +277,10 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
             {
                 modalities = new[] { "text" },
                 instructions = "Provide verbatim transcription of the user audio. Do not answer or summarize.",
+                input_audio_transcription = new
+                {
+                    model = DefaultInputTranscriptionModel
+                },
                 turn_detection = new { type = "server_vad" }
             }
         };

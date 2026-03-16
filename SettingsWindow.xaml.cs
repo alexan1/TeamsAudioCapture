@@ -113,6 +113,23 @@ public partial class SettingsWindow : Window
                 return;
             }
 
+            var selectedQaProvider = _configuration[$"QA:Models:{selectedQaModel}:Provider"];
+            var qaApiKeyMissing = selectedQaProvider switch
+            {
+                "ChatGPT" => string.IsNullOrWhiteSpace(openAiApiKey),
+                "Claude" => string.IsNullOrWhiteSpace(claudeApiKey),
+                "Mercury" => string.IsNullOrWhiteSpace(mercuryApiKey),
+                _ => false
+            };
+
+            if (qaApiKeyMissing)
+            {
+                var providerName = string.IsNullOrWhiteSpace(selectedQaProvider) ? "selected Q/A" : selectedQaProvider;
+                MessageBox.Show($"{providerName} API key is required for the selected Q/A model.",
+                    "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(saveLocation))
             {
                 saveLocation = "";

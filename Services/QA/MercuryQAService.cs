@@ -28,6 +28,11 @@ public sealed class MercuryQAService : IQAService
             throw new InvalidOperationException($"QA model '{selected}' is not configured.");
         }
 
+        if (string.IsNullOrWhiteSpace(_apiKeys.Value.Mercury))
+        {
+            throw new InvalidOperationException("Mercury API key is missing in ApiKeys:Mercury.");
+        }
+
         using var client = _httpClientFactory.CreateClient(nameof(MercuryQAService));
         client.BaseAddress = new Uri(modelSettings.BaseUrl);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _apiKeys.Value.Mercury);
@@ -42,6 +47,25 @@ public sealed class MercuryQAService : IQAService
         using var response = await client.PostAsync("/v1/qa", new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         response.EnsureSuccessStatusCode();
-        return body;
+
+        using var document = JsonDocument.Parse(body);
+        var answer = TryGetString(document.RootElement, "answer")
+            ?? TryGetString(document.RootElement, "text")
+            ?? TryGetString(document.RootElement, "content")
+            ?? TryGetString(document.RootElement, "response");
+
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            throw new InvalidOperationException("Mercury Q/A response did not contain an answer.");
+        }
+
+        return answer.Trim();
+    }
+
+    private static string? TryGetString(JsonElement root, string propertyName)
+    {
+        return root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
     }
 }

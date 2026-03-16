@@ -28,6 +28,11 @@ public sealed class ChatGPTQAService : IQAService
             throw new InvalidOperationException($"QA model '{selected}' is not configured.");
         }
 
+        if (string.IsNullOrWhiteSpace(_apiKeys.Value.OpenAI))
+        {
+            throw new InvalidOperationException("OpenAI API key is missing in ApiKeys:OpenAI.");
+        }
+
         using var client = _httpClientFactory.CreateClient(nameof(ChatGPTQAService));
         client.BaseAddress = new Uri(modelSettings.BaseUrl);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _apiKeys.Value.OpenAI);
@@ -45,6 +50,34 @@ public sealed class ChatGPTQAService : IQAService
         using var response = await client.PostAsync("/v1/chat/completions", new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         response.EnsureSuccessStatusCode();
-        return body;
+
+        using var document = JsonDocument.Parse(body);
+        if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+        {
+            throw new InvalidOperationException("OpenAI Q/A response did not contain any choices.");
+        }
+
+        var message = choices[0].GetProperty("message");
+        if (!message.TryGetProperty("content", out var contentElement))
+        {
+            throw new InvalidOperationException("OpenAI Q/A response did not contain message content.");
+        }
+
+        var answer = contentElement.ValueKind switch
+        {
+            JsonValueKind.String => contentElement.GetString(),
+            JsonValueKind.Array => string.Concat(
+                contentElement.EnumerateArray()
+                    .Where(item => item.TryGetProperty("text", out _))
+                    .Select(item => item.GetProperty("text").GetString())),
+            _ => null
+        };
+
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            throw new InvalidOperationException("OpenAI Q/A response was empty.");
+        }
+
+        return answer.Trim();
     }
 }

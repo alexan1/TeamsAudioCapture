@@ -6,6 +6,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.Configuration;
+using TeamsAudioCapture.Services.Factories;
 using MessageBox = System.Windows.MessageBox;
 
 namespace TeamsAudioCapture;
@@ -33,11 +34,13 @@ public partial class MainWindow : Window
     private DispatcherTimer _recordingTimer;
     private DateTime _recordingStartTime;
     private readonly IConfiguration _configuration;
+    private readonly IQAServiceFactory _qaServiceFactory;
 
-    public MainWindow(IConfiguration configuration)
+    public MainWindow(IConfiguration configuration, IQAServiceFactory qaServiceFactory)
     {
         InitializeComponent();
         _configuration = configuration;
+        _qaServiceFactory = qaServiceFactory;
         LoadConfiguration();
         
         _recordingTimer = new DispatcherTimer
@@ -231,9 +234,6 @@ public partial class MainWindow : Window
 
     private async System.Threading.Tasks.Task TryAnswerQuestionAsync(string transcriptChunk)
     {
-        if (_streamer == null)
-            return;
-
         var question = ExtractQuestion(transcriptChunk);
         if (string.IsNullOrWhiteSpace(question))
         {
@@ -258,15 +258,43 @@ public partial class MainWindow : Window
 
         var answerBuffer = new StringBuilder();
 
-        // Stream answer tokens as they arrive
-        await _streamer.StreamAnswerForQuestionAsync(question, chunk =>
+        try
         {
+            if (!TryValidateQaConfiguration(out var qaErrorMessage))
+            {
+                throw new InvalidOperationException(qaErrorMessage);
+            }
+
+            var qaService = _qaServiceFactory.Create(_configuration["QA:SelectedModel"] ?? string.Empty);
+            string contextSnapshot;
+            lock (_sessionTextLock)
+            {
+                contextSnapshot = _sessionTranscript.ToString();
+            }
+
+            var answer = await qaService.AskAsync(question, contextSnapshot);
+            if (string.IsNullOrWhiteSpace(answer))
+            {
+                throw new InvalidOperationException("The selected Q/A provider returned an empty answer.");
+            }
+
             lock (answerBuffer)
             {
-                answerBuffer.Append(chunk);
+                answerBuffer.Append(answer);
             }
-            Dispatcher.Invoke(() => _answerWindow?.AppendToLastAnswer(chunk));
-        });
+
+            await Dispatcher.InvokeAsync(() => _answerWindow?.AppendToLastAnswer(answer));
+        }
+        catch (Exception ex)
+        {
+            var errorText = $"Unable to answer with the selected Q/A model: {ex.Message}";
+            lock (answerBuffer)
+            {
+                answerBuffer.Append(errorText);
+            }
+
+            await Dispatcher.InvokeAsync(() => _answerWindow?.AppendToLastAnswer(errorText));
+        }
 
         await Dispatcher.InvokeAsync(() => _answerWindow?.FinalizeLastAnswer());
 
@@ -282,6 +310,47 @@ public partial class MainWindow : Window
             _sessionQna.AppendLine($"A: {finalAnswer}");
             _sessionQna.AppendLine();
         }
+    }
+
+    private bool TryValidateQaConfiguration(out string errorMessage)
+    {
+        var selectedQaModel = _configuration["QA:SelectedModel"];
+        if (string.IsNullOrWhiteSpace(selectedQaModel))
+        {
+            errorMessage = "No Q/A model is selected. Please choose one in Settings.";
+            return false;
+        }
+
+        var qaProvider = _configuration[$"QA:Models:{selectedQaModel}:Provider"];
+        var qaModel = _configuration[$"QA:Models:{selectedQaModel}:Model"];
+        if (string.IsNullOrWhiteSpace(qaProvider) || string.IsNullOrWhiteSpace(qaModel))
+        {
+            errorMessage = $"Q/A model '{selectedQaModel}' is not configured correctly.";
+            return false;
+        }
+
+        var apiKey = qaProvider switch
+        {
+            "ChatGPT" => _configuration["ApiKeys:OpenAI"],
+            "Claude" => _configuration["ApiKeys:Claude"],
+            "Mercury" => _configuration["ApiKeys:Mercury"],
+            _ => null
+        };
+
+        if (string.IsNullOrWhiteSpace(apiKey) || apiKey == "YOUR_API_KEY_HERE")
+        {
+            errorMessage = qaProvider switch
+            {
+                "ChatGPT" => "OpenAI API key is required for the selected Q/A model.",
+                "Claude" => "Claude API key is required for the selected Q/A model.",
+                "Mercury" => "Mercury API key is required for the selected Q/A model.",
+                _ => $"Unsupported Q/A provider '{qaProvider}'."
+            };
+            return false;
+        }
+
+        errorMessage = string.Empty;
+        return true;
     }
 
     private (string transcriptPath, string qnaPath) SaveSessionTextFiles(string audioFilePath)
@@ -486,6 +555,16 @@ public partial class MainWindow : Window
             {
                 MessageBox.Show(
                     Properties.Resources.ValidationRecordingMode,
+                    "Configuration Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            if (processWithLiveApi && !TryValidateQaConfiguration(out var qaErrorMessage))
+            {
+                MessageBox.Show(
+                    qaErrorMessage,
                     "Configuration Error",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -743,6 +822,16 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (!TryValidateQaConfiguration(out var qaErrorMessage))
+            {
+                MessageBox.Show(
+                    qaErrorMessage,
+                    "Configuration Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             if (_liveProvider == ProviderOpenAi)
             {
                 MessageBox.Show(

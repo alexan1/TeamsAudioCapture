@@ -28,6 +28,11 @@ public sealed class ClaudeQAService : IQAService
             throw new InvalidOperationException($"QA model '{selected}' is not configured.");
         }
 
+        if (string.IsNullOrWhiteSpace(_apiKeys.Value.Claude))
+        {
+            throw new InvalidOperationException("Claude API key is missing in ApiKeys:Claude.");
+        }
+
         using var client = _httpClientFactory.CreateClient(nameof(ClaudeQAService));
         client.BaseAddress = new Uri(modelSettings.BaseUrl);
         client.DefaultRequestHeaders.Add("x-api-key", _apiKeys.Value.Claude);
@@ -46,6 +51,23 @@ public sealed class ClaudeQAService : IQAService
         using var response = await client.PostAsync("/v1/messages", new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         response.EnsureSuccessStatusCode();
-        return body;
+
+        using var document = JsonDocument.Parse(body);
+        if (!document.RootElement.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Claude Q/A response did not contain content.");
+        }
+
+        var answer = string.Concat(
+            content.EnumerateArray()
+                .Where(item => item.TryGetProperty("text", out _))
+                .Select(item => item.GetProperty("text").GetString()));
+
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            throw new InvalidOperationException("Claude Q/A response was empty.");
+        }
+
+        return answer.Trim();
     }
 }

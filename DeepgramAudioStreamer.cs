@@ -25,6 +25,7 @@ public sealed class DeepgramAudioStreamer : ILiveAudioStreamer, IDisposable
     private bool _isConnected;
     private TaskCompletionSource<bool>? _setupCompletionSource;
     private readonly System.Text.StringBuilder _inputTranscriptBuffer = new();
+    private string _latestInterimTranscript = string.Empty;
     private static readonly string LogFilePath = Path.Combine(Path.GetTempPath(), "DeepgramDebug.log");
 
     public string? LastServerError { get; private set; }
@@ -120,7 +121,7 @@ public sealed class DeepgramAudioStreamer : ILiveAudioStreamer, IDisposable
         _webSocket = new ClientWebSocket();
         _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var uri = new Uri($"{RealtimeEndpoint}?model={_model}&encoding=linear16&sample_rate=16000");
+        var uri = new Uri($"{RealtimeEndpoint}?model={_model}&encoding=linear16&sample_rate=16000&interim_results=true");
 
         Log("🌐 Connecting to Deepgram...");
         _webSocket.Options.SetRequestHeader("Authorization", $"Token {_apiKey}");
@@ -206,7 +207,7 @@ public sealed class DeepgramAudioStreamer : ILiveAudioStreamer, IDisposable
             await _webSocket.SendAsync(
                 new ArraySegment<byte>(pcm16Data),
                 WebSocketMessageType.Binary,
-                false,
+                true,
                 _cts.Token
             ).ConfigureAwait(false);
         }
@@ -365,46 +366,49 @@ public sealed class DeepgramAudioStreamer : ILiveAudioStreamer, IDisposable
                 using var ms = new MemoryStream();
                 WebSocketReceiveResult result;
 
-                try
+                do
                 {
-                    result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), ct).ConfigureAwait(false);
-                }
-                catch (WebSocketException ex) when (ct.IsCancellationRequested)
-                {
-                    // Expected during shutdown
-                    Log("🛑 Deepgram receive cancelled");
-                    break;
-                }
-                catch (WebSocketException ex)
-                {
-                    // Only log and invoke error once per session, not repeatedly
-                    if (_isConnected)
+                    try
                     {
-                        _isConnected = false;
-                        LastServerError = ex.Message;
-                        var errorMsg = $"❌ Deepgram WebSocket error: {ex.Message}";
-                        Log(errorMsg);
-                        try
-                        {
-                            OnError?.Invoke(errorMsg);
-                        }
-                        catch (Exception handlerEx)
-                        {
-                            Log($"⚠️ Error handler failed: {handlerEx.Message}");
-                        }
+                        result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), ct).ConfigureAwait(false);
                     }
-                    break;
+                    catch (WebSocketException ex) when (ct.IsCancellationRequested)
+                    {
+                        Log("🛑 Deepgram receive cancelled");
+                        return;
+                    }
+                    catch (WebSocketException ex)
+                    {
+                        if (_isConnected)
+                        {
+                            _isConnected = false;
+                            LastServerError = ex.Message;
+                            var errorMsg = $"❌ Deepgram WebSocket error: {ex.Message}";
+                            Log(errorMsg);
+                            try
+                            {
+                                OnError?.Invoke(errorMsg);
+                            }
+                            catch (Exception handlerEx)
+                            {
+                                Log($"⚠️ Error handler failed: {handlerEx.Message}");
+                            }
+                        }
+
+                        return;
+                    }
+
+                    ms.Write(buffer, 0, result.Count);
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        Log("🌐 Deepgram closed connection");
+                        return;
+                    }
                 }
+                while (!result.EndOfMessage);
 
-                ms.Write(buffer, 0, result.Count);
-
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    Log("🌐 Deepgram closed connection");
-                    break;
-                }
-
-                if (!result.EndOfMessage)
+                if (ms.Length == 0)
                 {
                     continue;
                 }
@@ -448,33 +452,39 @@ public sealed class DeepgramAudioStreamer : ILiveAudioStreamer, IDisposable
             if (root.TryGetProperty("type", out var typeElement))
             {
                 var type = typeElement.GetString();
+                Log($"📨 Deepgram message type: {type}");
 
                 if (type == "Results")
                 {
-                    if (root.TryGetProperty("results", out var results) && results.TryGetProperty("channels", out var channels))
+                    string? transcriptText = null;
+                    if (root.TryGetProperty("channel", out var channel)
+                        && channel.TryGetProperty("alternatives", out var alternatives)
+                        && alternatives.ValueKind == JsonValueKind.Array
+                        && alternatives.GetArrayLength() > 0)
                     {
-                        if (channels.GetArrayLength() > 0)
+                        var alternative = alternatives[0];
+                        if (alternative.TryGetProperty("transcript", out var transcript))
                         {
-                            var channel = channels[0];
-                            if (channel.TryGetProperty("alternatives", out var alternatives) && alternatives.GetArrayLength() > 0)
-                            {
-                                var alternative = alternatives[0];
-                                if (alternative.TryGetProperty("transcript", out var transcript))
-                                {
-                                    var text = transcript.GetString();
-                                    if (!string.IsNullOrWhiteSpace(text))
-                                    {
-                                        _inputTranscriptBuffer.Append(text);
-                                        OnInputTranscriptReceived?.Invoke(text);
-                                    }
-                                }
-                            }
+                            transcriptText = transcript.GetString()?.Trim();
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(transcriptText))
+                    {
+                        var delta = GetTranscriptDelta(_latestInterimTranscript, transcriptText);
+                        _latestInterimTranscript = transcriptText;
+
+                        if (!string.IsNullOrWhiteSpace(delta))
+                        {
+                            _inputTranscriptBuffer.Append(delta);
+                            OnInputTranscriptReceived?.Invoke(delta);
                         }
                     }
 
                     if (root.TryGetProperty("is_final", out var isFinal) && isFinal.GetBoolean())
                     {
-                        var finalTranscript = _inputTranscriptBuffer.ToString().Trim();
+                        var finalTranscript = _latestInterimTranscript.Trim();
+                        _latestInterimTranscript = string.Empty;
                         _inputTranscriptBuffer.Clear();
 
                         if (!string.IsNullOrWhiteSpace(finalTranscript))
@@ -483,12 +493,68 @@ public sealed class DeepgramAudioStreamer : ILiveAudioStreamer, IDisposable
                         }
                     }
                 }
+                else if (type == "Metadata")
+                {
+                    _setupCompletionSource?.TrySetResult(true);
+                }
+                else if (type == "UtteranceEnd")
+                {
+                    var finalTranscript = _latestInterimTranscript.Trim();
+                    _latestInterimTranscript = string.Empty;
+                    _inputTranscriptBuffer.Clear();
+
+                    if (!string.IsNullOrWhiteSpace(finalTranscript))
+                    {
+                        OnTurnComplete?.Invoke(finalTranscript);
+                    }
+                }
+                else if (type == "Error")
+                {
+                    LastServerError = json;
+                    OnError?.Invoke($"Deepgram error: {json}");
+                }
             }
         }
         catch (JsonException ex)
         {
             Log($"⚠️ Deepgram parse error: {ex.Message}");
         }
+    }
+
+    private static string? GetTranscriptDelta(string previousTranscript, string currentTranscript)
+    {
+        if (string.IsNullOrWhiteSpace(currentTranscript))
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(previousTranscript))
+        {
+            return currentTranscript;
+        }
+
+        if (currentTranscript.StartsWith(previousTranscript, StringComparison.OrdinalIgnoreCase))
+        {
+            var suffix = currentTranscript[previousTranscript.Length..];
+            return string.IsNullOrWhiteSpace(suffix) ? null : suffix;
+        }
+
+        if (previousTranscript.StartsWith(currentTranscript, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var overlapLength = Math.Min(previousTranscript.Length, currentTranscript.Length);
+        for (var i = overlapLength; i > 0; i--)
+        {
+            if (previousTranscript.EndsWith(currentTranscript[..i], StringComparison.OrdinalIgnoreCase))
+            {
+                var suffix = currentTranscript[i..];
+                return string.IsNullOrWhiteSpace(suffix) ? null : suffix;
+            }
+        }
+
+        return currentTranscript;
     }
 
     private static byte[] ConvertToPcm16(byte[] audioData, int offset, int count, WaveFormat sourceFormat)
