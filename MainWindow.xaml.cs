@@ -15,6 +15,8 @@ public partial class MainWindow : Window
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
     private const string ProviderDeepgram = "Deepgram";
+    private const string OpenAiProviderOldKey = "OpenAI Realtime API (gpt-4o-realtime-preview) — WebSocket";
+    private const string OpenAiProviderCurrentKey = "OpenAI Realtime API (gpt-realtime-1.5) — WebSocket";
 
     private AudioCapturer? _capturer;
     private ILiveAudioStreamer? _streamer;
@@ -47,7 +49,7 @@ public partial class MainWindow : Window
 
     private void LoadConfiguration()
     {
-        var selectedProviderName = _configuration["Transcription:SelectedProvider"];
+        var selectedProviderName = ResolveTranscriptionProviderKey(_configuration["Transcription:SelectedProvider"]);
         var providerType = selectedProviderName is null
             ? null
             : _configuration[$"Transcription:Providers:{selectedProviderName}:Provider"];
@@ -342,7 +344,7 @@ public partial class MainWindow : Window
 
     private ILiveAudioStreamer? CreateStreamerForProvider()
     {
-        var selectedProviderName = _configuration["Transcription:SelectedProvider"];
+        var selectedProviderName = ResolveTranscriptionProviderKey(_configuration["Transcription:SelectedProvider"]);
         if (string.IsNullOrWhiteSpace(selectedProviderName))
         {
             MessageBox.Show(
@@ -447,6 +449,23 @@ public partial class MainWindow : Window
 
         System.Diagnostics.Debug.WriteLine("Creating GeminiAudioStreamer (default)");
         return new GeminiAudioStreamer(geminiKey);
+    }
+
+    private string? ResolveTranscriptionProviderKey(string? configuredProviderKey)
+    {
+        if (string.IsNullOrWhiteSpace(configuredProviderKey))
+        {
+            return configuredProviderKey;
+        }
+
+        if (!string.Equals(configuredProviderKey, OpenAiProviderOldKey, StringComparison.Ordinal))
+        {
+            return configuredProviderKey;
+        }
+
+        return string.IsNullOrWhiteSpace(_configuration[$"Transcription:Providers:{OpenAiProviderCurrentKey}:Provider"])
+            ? configuredProviderKey
+            : OpenAiProviderCurrentKey;
     }
 
     private async void StartButton_Click(object sender, RoutedEventArgs e)

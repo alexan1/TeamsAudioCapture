@@ -15,6 +15,8 @@ namespace TeamsAudioCapture;
 public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 {
     private const string RealtimeEndpoint = "wss://api.openai.com/v1/realtime";
+    private const string RealtimeModelReplacement = "gpt-realtime-1.5";
+    private const string AudioModelReplacement = "gpt-audio-1.5";
 
     private readonly string _apiKey;
     private readonly string _transcriptionModel;
@@ -49,7 +51,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         }
 
         _apiKey = apiKey;
-        _transcriptionModel = transcriptionModel;
+        _transcriptionModel = NormalizeTranscriptionModel(transcriptionModel);
         _qnaModel = qnaModel;
         _httpClient = new HttpClient();
     }
@@ -233,7 +235,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         _webSocket?.Dispose();
         _webSocket = new ClientWebSocket();
         _webSocket.Options.SetRequestHeader("Authorization", $"Bearer {_apiKey}");
-        _webSocket.Options.SetRequestHeader("OpenAI-Beta", "realtime=v1");
         _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var uri = new Uri($"{RealtimeEndpoint}?model={_transcriptionModel}");
@@ -243,6 +244,26 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         _receiveTask = Task.Run(() => ReceiveMessagesAsync(ct), ct);
 
         await SendSessionUpdateAsync(ct).ConfigureAwait(false);
+    }
+
+    private static string NormalizeTranscriptionModel(string model)
+    {
+        var trimmed = model.Trim();
+        if (trimmed.Length == 0)
+        {
+            return trimmed;
+        }
+
+        return trimmed.ToLowerInvariant() switch
+        {
+            "gpt-4o-realtime-preview" => RealtimeModelReplacement,
+            "gpt-4o-realtime-preview-2025-06-03" => RealtimeModelReplacement,
+            "gpt-4o-realtime-preview-2024-12-17" => RealtimeModelReplacement,
+            "gpt-4o-mini-realtime-preview" => RealtimeModelReplacement,
+            "gpt-4o-audio-preview" => AudioModelReplacement,
+            "gpt-4o-mini-audio-preview" => AudioModelReplacement,
+            _ => trimmed
+        };
     }
 
     private async Task SendSessionUpdateAsync(CancellationToken ct)
