@@ -50,7 +50,10 @@ public sealed class ClaudeQAService : IQAService
 
         using var response = await client.PostAsync("/v1/messages", new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Claude API error {(int)response.StatusCode}: {body}");
+        }
 
         using var document = JsonDocument.Parse(body);
         if (!document.RootElement.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)

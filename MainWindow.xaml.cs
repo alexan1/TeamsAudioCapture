@@ -203,6 +203,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private static readonly HashSet<string> _questionWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "what", "where", "when", "who", "why", "how",
+        "can", "could", "would", "should", "will", "shall",
+        "do", "does", "did", "is", "are", "was", "were",
+        "have", "has", "had", "may", "might", "must"
+    };
+
     private static string? ExtractQuestion(string transcriptText)
     {
         if (string.IsNullOrWhiteSpace(transcriptText))
@@ -213,7 +221,7 @@ public partial class MainWindow : Window
         var lines = transcriptText
             .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim())
-            .Where(line => line.Contains('?'))
+            .Where(line => line.Length >= 3)
             .ToList();
 
         if (lines.Count == 0)
@@ -221,15 +229,26 @@ public partial class MainWindow : Window
             return null;
         }
 
-        var candidate = lines[^1];
-        var questionEnd = candidate.LastIndexOf('?');
-        if (questionEnd < 0)
+        // Prefer lines with an explicit "?" mark
+        var lineWithMark = lines.LastOrDefault(l => l.Contains('?'));
+        if (lineWithMark != null)
         {
-            return null;
+            var questionEnd = lineWithMark.LastIndexOf('?');
+            var question = lineWithMark[..(questionEnd + 1)].Trim();
+            return question.Length < 3 ? null : question;
         }
 
-        var question = candidate[..(questionEnd + 1)].Trim();
-        return question.Length < 3 ? null : question;
+        // Fallback: detect questions by question words even when "?" is absent
+        // (speech-to-text APIs often omit punctuation)
+        var lastLine = lines[^1];
+        var firstWord = lastLine.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
+        if (_questionWords.Contains(firstWord))
+        {
+            var normalized = lastLine.TrimEnd('.', ',', ';', '!');
+            return normalized + "?";
+        }
+
+        return null;
     }
 
     private async System.Threading.Tasks.Task TryAnswerQuestionAsync(string transcriptChunk)

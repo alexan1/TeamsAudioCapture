@@ -40,32 +40,43 @@ public sealed class MercuryQAService : IQAService
         var payload = new
         {
             model = modelSettings.Model,
-            question,
-            context
+            messages = new[]
+            {
+                new { role = "system", content = "Answer using provided context only." },
+                new { role = "user", content = $"Context: {context}\n\nQuestion: {question}" }
+            }
         };
 
-        using var response = await client.PostAsync("/v1/qa", new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
+        using var response = await client.PostAsync("/v1/chat/completions", new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Mercury API error {(int)response.StatusCode}: {body}");
+        }
 
         using var document = JsonDocument.Parse(body);
-        var answer = TryGetString(document.RootElement, "answer")
-            ?? TryGetString(document.RootElement, "text")
-            ?? TryGetString(document.RootElement, "content")
-            ?? TryGetString(document.RootElement, "response");
+        if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+        {
+            throw new InvalidOperationException("Mercury Q/A response did not contain any choices.");
+        }
+
+        var message = choices[0].GetProperty("message");
+        if (!message.TryGetProperty("content", out var contentElement))
+        {
+            throw new InvalidOperationException("Mercury Q/A response did not contain message content.");
+        }
+
+        var answer = contentElement.ValueKind switch
+        {
+            JsonValueKind.String => contentElement.GetString(),
+            _ => null
+        };
 
         if (string.IsNullOrWhiteSpace(answer))
         {
-            throw new InvalidOperationException("Mercury Q/A response did not contain an answer.");
+            throw new InvalidOperationException("Mercury Q/A response was empty.");
         }
 
         return answer.Trim();
-    }
-
-    private static string? TryGetString(JsonElement root, string propertyName)
-    {
-        return root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
-            ? property.GetString()
-            : null;
     }
 }

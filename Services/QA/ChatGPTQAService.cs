@@ -49,7 +49,10 @@ public sealed class ChatGPTQAService : IQAService
 
         using var response = await client.PostAsync("/v1/chat/completions", new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"OpenAI API error {(int)response.StatusCode}: {body}");
+        }
 
         using var document = JsonDocument.Parse(body);
         if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
