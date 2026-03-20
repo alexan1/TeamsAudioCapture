@@ -12,6 +12,11 @@
 
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
+| developer | Senior Developer | [charter](agents/developer/charter.md) | ✅ Active |
+| architect | System Designer | [charter](agents/architect/charter.md) | ✅ Active |
+| qa-engineer | QA Engineer | [charter](agents/qa-engineer/charter.md) | ✅ Active |
+| ui-designer | UI/UX Designer | [charter](agents/ui-designer/charter.md) | ✅ Active |
+| docs-writer | Documentation | [charter](agents/docs-writer/charter.md) | ✅ Active |
 
 
 ## Coding Agent
