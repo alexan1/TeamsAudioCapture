@@ -81,6 +81,14 @@
                                  FontSize="12"
                                  Margin="0,0,0,10"/>
 
+                        <TextBlock Text="Model" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBox x:Name="GeminiModelTextBox"
+                                 Padding="8"
+                                 FontFamily="Consolas"
+                                 FontSize="12"
+                                 Margin="0,0,0,5"/>
+                        <TextBlock Text="Example: models/gemini-3.1-flash-live-preview" TextWrapping="Wrap" Foreground="#999" FontSize="11" Margin="0,0,0,10"/>
+
                         <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11">
                             Get your API key from 
                             <Hyperlink NavigateUri="https://makersuite.google.com/app/apikey" RequestNavigate="Hyperlink_RequestNavigate">

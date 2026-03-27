@@ -12,8 +12,9 @@ using TeamsAudioCapture;
 
 public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
 {
-    private const string DefaultLiveModel = "models/gemini-2.5-flash-native-audio-preview-12-2025";
+    private const string DefaultLiveModel = "models/gemini-3.1-flash-live-preview";
     private readonly string _apiKey;
+    private readonly string _liveModel;
     private readonly HttpClient _httpClient;
     private ClientWebSocket? _webSocket;
     private CancellationTokenSource? _cts;
@@ -33,10 +34,13 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
 
     private readonly System.Text.StringBuilder _inputTranscriptBuffer = new();
 
-    public GeminiAudioStreamer(string apiKey)
+    private bool UseModernRealtimeInput => _liveModel.Contains("gemini-3.1", StringComparison.OrdinalIgnoreCase);
+
+    public GeminiAudioStreamer(string apiKey, string? liveModel = null)
     {
         ArgumentNullException.ThrowIfNull(apiKey);
         _apiKey = apiKey;
+        _liveModel = string.IsNullOrWhiteSpace(liveModel) ? DefaultLiveModel : liveModel.Trim();
         _httpClient = new HttpClient();
 
         // Clear log file
@@ -175,7 +179,19 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
             var pcm16Data = ConvertToPCM16(audioData, offset, count, waveFormat);
             var base64Audio = Convert.ToBase64String(pcm16Data);
 
-            var message = new
+            object realtimeInput;
+            if (UseModernRealtimeInput)
+            {
+                realtimeInput = new
+                {
+                    audio = new
+                    {
+                        mimeType = "audio/pcm;rate=16000",
+                        data = base64Audio
+                    }
+                };
+            }
+            else
             {
                 realtimeInput = new
                 {
@@ -187,8 +203,10 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
                             data = base64Audio
                         }
                     }
-                }
-            };
+                };
+            }
+
+            var message = new { realtimeInput };
 
             var json = JsonSerializer.Serialize(message);
             var bytes = Encoding.UTF8.GetBytes(json);
@@ -245,7 +263,7 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
             {
                 setup = new
                 {
-                    model = DefaultLiveModel,
+                    model = _liveModel,
                     generationConfig = new
                     {
                         responseModalities = new[] { "AUDIO" }

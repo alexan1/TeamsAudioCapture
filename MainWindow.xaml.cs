@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
     private const string DefaultOpenAiModel = "gpt-4o-mini-realtime-preview";
+    private const string DefaultGeminiModel = "models/gemini-3.1-flash-live-preview";
 
     private AudioCapturer? _capturer;
     private ILiveAudioStreamer? _streamer;
@@ -369,7 +370,13 @@ public partial class MainWindow : Window
             return null;
         }
 
-        return new GeminiAudioStreamer(geminiKey);
+        var geminiModel = _configuration["Gemini:Model"];
+        if (string.IsNullOrWhiteSpace(geminiModel))
+        {
+            geminiModel = DefaultGeminiModel;
+        }
+
+        return new GeminiAudioStreamer(geminiKey, geminiModel);
     }
 
     private async void StartButton_Click(object sender, RoutedEventArgs e)
@@ -646,6 +653,11 @@ public partial class MainWindow : Window
             if (dialog.ShowDialog() == true)
             {
                 var filePath = dialog.FileName;
+                var geminiModel = _configuration["Gemini:Model"];
+                if (string.IsNullOrWhiteSpace(geminiModel))
+                {
+                    geminiModel = DefaultGeminiModel;
+                }
 
                 StartButton.IsEnabled = false;
                 StopButton.IsEnabled = false;
@@ -658,7 +670,7 @@ public partial class MainWindow : Window
                     ? $"Processing: {Path.GetFileName(filePath)}\n\nPlease wait...\n"
                     : Properties.Resources.TranscriptHiddenMessage);
 
-                _streamer = new GeminiAudioStreamer(apiKey);
+                _streamer = new GeminiAudioStreamer(apiKey, geminiModel);
                 await _streamer.ConnectAsync();
                 EnsureAnswerWindow();
 

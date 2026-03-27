@@ -14,6 +14,7 @@ public partial class SettingsWindow : Window
 {
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
+    private const string DefaultGeminiModel = "models/gemini-3.1-flash-live-preview";
     private const string DefaultOpenAiModel = "gpt-4o-mini-realtime-preview";
 
     private readonly IConfiguration _configuration;
@@ -44,6 +45,11 @@ public partial class SettingsWindow : Window
         OpenAiModelTextBox.Text = string.IsNullOrWhiteSpace(openAiModel)
             ? DefaultOpenAiModel
             : openAiModel;
+
+        var geminiModel = _configuration["Gemini:Model"];
+        GeminiModelTextBox.Text = string.IsNullOrWhiteSpace(geminiModel)
+            ? DefaultGeminiModel
+            : geminiModel;
 
         var liveProvider = _configuration["Recording:LiveProvider"] ?? ProviderGemini;
         foreach (var item in LiveProviderComboBox.Items.OfType<System.Windows.Controls.ComboBoxItem>())
@@ -80,6 +86,7 @@ public partial class SettingsWindow : Window
         try
         {
             var geminiApiKey = ApiKeyTextBox.Text.Trim();
+            var geminiModel = GeminiModelTextBox.Text.Trim();
             var openAiApiKey = OpenAiApiKeyTextBox.Text.Trim();
             var openAiModel = OpenAiModelTextBox.Text.Trim();
             var saveAudio = SaveAudioCheckBox.IsChecked ?? true;
@@ -115,6 +122,11 @@ public partial class SettingsWindow : Window
                 openAiModel = DefaultOpenAiModel;
             }
 
+            if (string.IsNullOrWhiteSpace(geminiModel))
+            {
+                geminiModel = DefaultGeminiModel;
+            }
+
             if (string.IsNullOrWhiteSpace(saveLocation))
             {
                 saveLocation = "";
@@ -126,7 +138,8 @@ public partial class SettingsWindow : Window
             {
                 Gemini = new
                 {
-                    ApiKey = string.IsNullOrWhiteSpace(geminiApiKey) ? "YOUR_API_KEY_HERE" : geminiApiKey
+                    ApiKey = string.IsNullOrWhiteSpace(geminiApiKey) ? "YOUR_API_KEY_HERE" : geminiApiKey,
+                    Model = geminiModel
                 },
                 OpenAI = new
                 {
