@@ -32,13 +32,13 @@ public partial class SettingsWindow : Window
         var geminiApiKey = _configuration["Gemini:ApiKey"];
         if (!string.IsNullOrWhiteSpace(geminiApiKey) && geminiApiKey != "YOUR_API_KEY_HERE")
         {
-            ApiKeyTextBox.Text = geminiApiKey;
+            ApiKeyPasswordBox.Password = geminiApiKey;
         }
 
         var openAiApiKey = _configuration["OpenAI:ApiKey"];
         if (!string.IsNullOrWhiteSpace(openAiApiKey) && openAiApiKey != "YOUR_API_KEY_HERE")
         {
-            OpenAiApiKeyTextBox.Text = openAiApiKey;
+            OpenAiApiKeyPasswordBox.Password = openAiApiKey;
         }
 
         var openAiModel = _configuration["OpenAI:Model"];
@@ -85,9 +85,9 @@ public partial class SettingsWindow : Window
     {
         try
         {
-            var geminiApiKey = ApiKeyTextBox.Text.Trim();
+            var geminiApiKey = ApiKeyPasswordBox.Password.Trim();
             var geminiModel = GeminiModelTextBox.Text.Trim();
-            var openAiApiKey = OpenAiApiKeyTextBox.Text.Trim();
+            var openAiApiKey = OpenAiApiKeyPasswordBox.Password.Trim();
             var openAiModel = OpenAiModelTextBox.Text.Trim();
             var saveAudio = SaveAudioCheckBox.IsChecked ?? true;
             var captureMicrophone = CaptureMicrophoneCheckBox.IsChecked ?? false;
