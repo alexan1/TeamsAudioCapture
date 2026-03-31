@@ -75,11 +75,11 @@
                         <TextBlock Text="🤖 Gemini API Configuration" FontWeight="Bold" FontSize="14" Margin="0,0,0,10"/>
 
                         <TextBlock Text="API Key" FontWeight="Bold" Margin="0,0,0,5"/>
-                        <TextBox x:Name="ApiKeyTextBox" 
-                                 Padding="8"
-                                 FontFamily="Consolas"
-                                 FontSize="12"
-                                 Margin="0,0,0,10"/>
+                        <PasswordBox x:Name="ApiKeyPasswordBox" 
+                                     Padding="8"
+                                     FontFamily="Consolas"
+                                     FontSize="12"
+                                     Margin="0,0,0,10"/>
 
                         <TextBlock Text="Model" FontWeight="Bold" Margin="0,0,0,5"/>
                         <TextBox x:Name="GeminiModelTextBox"
@@ -105,11 +105,11 @@
                         <TextBlock Text="{x:Static properties:Resources.SettingsOpenAiTitle}" FontWeight="Bold" FontSize="14" Margin="0,0,0,10"/>
 
                         <TextBlock Text="{x:Static properties:Resources.SettingsOpenAiApiKeyLabel}" FontWeight="Bold" Margin="0,0,0,5"/>
-                        <TextBox x:Name="OpenAiApiKeyTextBox" 
-                                 Padding="8"
-                                 FontFamily="Consolas"
-                                 FontSize="12"
-                                 Margin="0,0,0,10"/>
+                        <PasswordBox x:Name="OpenAiApiKeyPasswordBox" 
+                                     Padding="8"
+                                     FontFamily="Consolas"
+                                     FontSize="12"
+                                     Margin="0,0,0,10"/>
 
                         <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,0,0,8">
                             <Run Text="{x:Static properties:Resources.SettingsOpenAiApiKeyHelp}" />
