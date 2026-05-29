@@ -14,7 +14,6 @@ public partial class MainWindow : Window
 {
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
-    private const string DefaultOpenAiModel = "gpt-4o-mini-realtime-preview";
     private const string DefaultGeminiModel = "models/gemini-3.1-flash-live-preview";
 
     private AudioCapturer? _capturer;
@@ -353,10 +352,10 @@ public partial class MainWindow : Window
             var model = _configuration["OpenAI:Model"];
             if (string.IsNullOrWhiteSpace(model))
             {
-                model = DefaultOpenAiModel;
+                model = OpenAiRealtimeModels.DefaultModel;
             }
 
-            return new OpenAiRealtimeStreamer(apiKey, model);
+            return new OpenAiRealtimeStreamer(apiKey, OpenAiRealtimeModels.Normalize(model));
         }
 
         var geminiKey = _configuration["Gemini:ApiKey"];

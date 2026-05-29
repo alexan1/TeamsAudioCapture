@@ -43,7 +43,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         }
 
         _apiKey = apiKey;
-        _model = model;
+        _model = OpenAiRealtimeModels.Normalize(model);
         _httpClient = new HttpClient();
     }
 
@@ -219,7 +219,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         _webSocket?.Dispose();
         _webSocket = new ClientWebSocket();
         _webSocket.Options.SetRequestHeader("Authorization", $"Bearer {_apiKey}");
-        _webSocket.Options.SetRequestHeader("OpenAI-Beta", "realtime=v1");
         _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var uri = new Uri($"{RealtimeEndpoint}?model={_model}");
