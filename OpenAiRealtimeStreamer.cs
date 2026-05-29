@@ -16,6 +16,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 {
     private const string RealtimeEndpoint = "wss://api.openai.com/v1/realtime";
     private const string DefaultTranscriptionModel = "gpt-4o-mini-transcribe";
+    private const int MinimumCommitBytes = 3200;
     private static readonly TimeSpan CommitInterval = TimeSpan.FromMilliseconds(750);
     private static readonly string LogFilePath = Path.Combine(Path.GetTempPath(), "OpenAiDebug.log");
     private static readonly object LogLock = new();
@@ -31,6 +32,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
     private Task? _receiveTask;
     private bool _isConnected;
     private bool _hasPendingAudio;
+    private int _pendingAudioBytes;
     private DateTime _lastCommitUtc = DateTime.MinValue;
     private TaskCompletionSource<bool>? _setupCompletionSource;
 
@@ -114,7 +116,8 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         await SendJsonAsync(JsonSerializer.Serialize(payload), _cts.Token).ConfigureAwait(false);
 
         _hasPendingAudio = true;
-        if (DateTime.UtcNow - _lastCommitUtc >= CommitInterval)
+        _pendingAudioBytes += pcm16Data.Length;
+        if (_pendingAudioBytes >= MinimumCommitBytes && DateTime.UtcNow - _lastCommitUtc >= CommitInterval)
         {
             await CommitInputAudioBufferAsync(_cts.Token).ConfigureAwait(false);
         }
@@ -197,8 +200,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 
         try
         {
-            _cts?.Cancel();
-
             if (_webSocket != null && _webSocket.State == WebSocketState.Open)
             {
                 using var flushCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -211,6 +212,8 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
                     Log($"⚠️ OpenAI final audio commit failed: {ex.Message}");
                 }
             }
+
+            _cts?.Cancel();
 
             if (_receiveTask != null)
             {
@@ -264,10 +267,22 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
             type = "session.update",
             session = new
             {
-                modalities = new[] { "text" },
+                type = "realtime",
+                output_modalities = new[] { "text" },
                 instructions = "Provide verbatim transcription of the user audio. Do not answer or summarize.",
-                input_audio_transcription = new { model = DefaultTranscriptionModel },
-                turn_detection = new { type = "server_vad" }
+                audio = new
+                {
+                    input = new
+                    {
+                        transcription = new { model = DefaultTranscriptionModel },
+                        turn_detection = new
+                        {
+                            type = "server_vad",
+                            create_response = false,
+                            interrupt_response = false
+                        }
+                    }
+                }
             }
         };
 
@@ -336,7 +351,10 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
             switch (type)
             {
                 case "session.created":
+                    Log("ℹ️ OpenAI session created");
+                    break;
                 case "session.updated":
+                    Log("✅ OpenAI session updated");
                     _setupCompletionSource?.TrySetResult(true);
                     break;
                 case "error":
@@ -362,6 +380,13 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
                             OnResponseReceived?.Invoke(text);
                         }
                     }
+
+                    break;
+                case "response.done":
+                    HandleResponseDone(root);
+                    break;
+                case "conversation.item.done":
+                    HandleConversationItemDone(root);
                     break;
             }
         }
@@ -416,7 +441,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 
     private async Task CommitInputAudioBufferAsync(CancellationToken cancellationToken)
     {
-        if (!_hasPendingAudio || _webSocket == null || _webSocket.State != WebSocketState.Open)
+        if (!_hasPendingAudio || _pendingAudioBytes < MinimumCommitBytes || _webSocket == null || _webSocket.State != WebSocketState.Open)
         {
             return;
         }
@@ -428,8 +453,96 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 
         await SendJsonAsync(payload, cancellationToken).ConfigureAwait(false);
         _hasPendingAudio = false;
+        _pendingAudioBytes = 0;
         _lastCommitUtc = DateTime.UtcNow;
         Log("📤 Committed OpenAI input audio buffer");
+    }
+
+    private void HandleResponseDone(JsonElement root)
+    {
+        if (!root.TryGetProperty("response", out var response) ||
+            !response.TryGetProperty("output", out var output) ||
+            output.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var item in output.EnumerateArray())
+        {
+            if (!item.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            PublishAssistantOutput(content);
+        }
+    }
+
+    private void HandleConversationItemDone(JsonElement root)
+    {
+        if (!root.TryGetProperty("item", out var item) ||
+            !item.TryGetProperty("content", out var content) ||
+            content.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        if (item.TryGetProperty("role", out var roleElement) &&
+            string.Equals(roleElement.GetString(), "user", StringComparison.OrdinalIgnoreCase))
+        {
+            PublishUserTranscript(content);
+            return;
+        }
+
+        if (item.TryGetProperty("role", out roleElement) &&
+            string.Equals(roleElement.GetString(), "assistant", StringComparison.OrdinalIgnoreCase))
+        {
+            PublishAssistantOutput(content);
+        }
+    }
+
+    private void PublishUserTranscript(JsonElement content)
+    {
+        foreach (var part in content.EnumerateArray())
+        {
+            if (!IsContentType(part, "input_audio") || !TryGetTextProperty(part, "transcript", out var transcript))
+            {
+                continue;
+            }
+
+            lock (_inputTranscriptBuffer)
+            {
+                _inputTranscriptBuffer.Clear();
+            }
+
+            OnInputTranscriptReceived?.Invoke(transcript);
+            OnTurnComplete?.Invoke(transcript);
+            return;
+        }
+    }
+
+    private void PublishAssistantOutput(JsonElement content)
+    {
+        foreach (var part in content.EnumerateArray())
+        {
+            if ((IsContentType(part, "output_text") || IsContentType(part, "output_audio")) &&
+                TryGetTextProperty(part, "text", out var text))
+            {
+                OnResponseReceived?.Invoke(text);
+                continue;
+            }
+
+            if (IsContentType(part, "output_audio") && TryGetTextProperty(part, "transcript", out var transcript))
+            {
+                OnResponseReceived?.Invoke(transcript);
+            }
+        }
+    }
+
+    private static bool IsContentType(JsonElement element, string expectedType)
+    {
+        return element.TryGetProperty("type", out var typeElement) &&
+               string.Equals(typeElement.GetString(), expectedType, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task SendJsonAsync(string json, CancellationToken cancellationToken)
