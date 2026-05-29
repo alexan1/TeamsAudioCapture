@@ -17,7 +17,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
     private const string RealtimeEndpoint = "wss://api.openai.com/v1/realtime";
     private const string DefaultTranscriptionModel = "gpt-4o-mini-transcribe";
     private const int MinimumCommitBytes = 3200;
-    private static readonly TimeSpan CommitInterval = TimeSpan.FromMilliseconds(750);
     private static readonly string LogFilePath = Path.Combine(Path.GetTempPath(), "OpenAiDebug.log");
     private static readonly object LogLock = new();
     private static bool _logInitialized;
@@ -33,7 +32,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
     private bool _isConnected;
     private bool _hasPendingAudio;
     private int _pendingAudioBytes;
-    private DateTime _lastCommitUtc = DateTime.MinValue;
     private TaskCompletionSource<bool>? _setupCompletionSource;
 
     public OpenAiRealtimeStreamer(string apiKey, string model)
@@ -117,10 +115,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 
         _hasPendingAudio = true;
         _pendingAudioBytes += pcm16Data.Length;
-        if (_pendingAudioBytes >= MinimumCommitBytes && DateTime.UtcNow - _lastCommitUtc >= CommitInterval)
-        {
-            await CommitInputAudioBufferAsync(_cts.Token).ConfigureAwait(false);
-        }
     }
 
     /// <summary>Streams a text answer for the specified question.</summary>
@@ -357,6 +351,17 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
                     Log("✅ OpenAI session updated");
                     _setupCompletionSource?.TrySetResult(true);
                     break;
+                case "input_audio_buffer.speech_started":
+                    Log("🎙️ OpenAI detected speech start");
+                    break;
+                case "input_audio_buffer.speech_stopped":
+                    Log("🛑 OpenAI detected speech stop");
+                    break;
+                case "input_audio_buffer.committed":
+                    _hasPendingAudio = false;
+                    _pendingAudioBytes = 0;
+                    Log("📥 OpenAI committed input audio buffer");
+                    break;
                 case "error":
                     if (root.TryGetProperty("error", out var error))
                     {
@@ -453,7 +458,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         await SendJsonAsync(payload, cancellationToken).ConfigureAwait(false);
         _hasPendingAudio = false;
         _pendingAudioBytes = 0;
-        _lastCommitUtc = DateTime.UtcNow;
         Log("📤 Committed OpenAI input audio buffer");
     }
 
