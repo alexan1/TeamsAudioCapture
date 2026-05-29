@@ -355,7 +355,7 @@ public partial class MainWindow : Window
                 model = OpenAiRealtimeModels.DefaultModel;
             }
 
-            return new OpenAiRealtimeStreamer(apiKey, OpenAiRealtimeModels.Normalize(model));
+            return new OpenAiRealtimeStreamer(apiKey, model);
         }
 
         var geminiKey = _configuration["Gemini:ApiKey"];
