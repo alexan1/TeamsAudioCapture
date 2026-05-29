@@ -15,8 +15,6 @@ public partial class SettingsWindow : Window
     private const string ProviderGemini = "Gemini";
     private const string ProviderOpenAi = "OpenAI";
     private const string DefaultGeminiModel = "models/gemini-3.1-flash-live-preview";
-    private const string DefaultOpenAiModel = "gpt-4o-mini-realtime-preview";
-
     private readonly IConfiguration _configuration;
     private const string LocalSettingsFile = "appsettings.Local.json";
 
@@ -43,8 +41,8 @@ public partial class SettingsWindow : Window
 
         var openAiModel = _configuration["OpenAI:Model"];
         OpenAiModelTextBox.Text = string.IsNullOrWhiteSpace(openAiModel)
-            ? DefaultOpenAiModel
-            : openAiModel;
+            ? OpenAiRealtimeModels.DefaultModel
+            : OpenAiRealtimeModels.Normalize(openAiModel);
 
         var geminiModel = _configuration["Gemini:Model"];
         GeminiModelTextBox.Text = string.IsNullOrWhiteSpace(geminiModel)
@@ -119,7 +117,11 @@ public partial class SettingsWindow : Window
 
             if (string.IsNullOrWhiteSpace(openAiModel))
             {
-                openAiModel = DefaultOpenAiModel;
+                openAiModel = OpenAiRealtimeModels.DefaultModel;
+            }
+            else
+            {
+                openAiModel = OpenAiRealtimeModels.Normalize(openAiModel);
             }
 
             if (string.IsNullOrWhiteSpace(geminiModel))
