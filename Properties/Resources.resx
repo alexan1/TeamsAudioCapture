@@ -40,7 +40,7 @@
     <value>Realtime Model</value>
   </data>
   <data name="SettingsOpenAiModelHelp" xml:space="preserve">
-    <value>Default: gpt-realtime-mini. Legacy preview model names are upgraded automatically.</value>
+    <value>Default: gpt-realtime. Legacy preview model names are upgraded automatically.</value>
   </data>
   <data name="SettingsProcessWithLiveApi" xml:space="preserve">
     <value>Process audio with Live API</value>

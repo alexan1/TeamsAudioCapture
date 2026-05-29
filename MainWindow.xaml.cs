@@ -454,7 +454,9 @@ public partial class MainWindow : Window
                 catch (Exception ex)
                 {
                     var serverError = _streamer?.LastServerError;
-                    var logPath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
+                    var logPath = string.Equals(_liveProvider, ProviderOpenAi, StringComparison.OrdinalIgnoreCase)
+                        ? Path.Combine(Path.GetTempPath(), "OpenAiDebug.log")
+                        : Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
                     _streamer = null;
 
                     var errorDetails = ex is TaskCanceledException or OperationCanceledException

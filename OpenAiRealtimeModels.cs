@@ -4,8 +4,7 @@ namespace TeamsAudioCapture;
 
 internal static class OpenAiRealtimeModels
 {
-    public const string DefaultModel = "gpt-realtime-mini";
-    public const string DefaultLegacyReplacement = "gpt-realtime";
+    public const string DefaultModel = "gpt-realtime";
 
     public static string Normalize(string? model)
     {
@@ -18,7 +17,12 @@ internal static class OpenAiRealtimeModels
 
         if (trimmedModel.Equals("gpt-realtime-1.5", StringComparison.OrdinalIgnoreCase))
         {
-            return DefaultLegacyReplacement;
+            return DefaultModel;
+        }
+
+        if (trimmedModel.Equals("gpt-realtime-mini", StringComparison.OrdinalIgnoreCase))
+        {
+            return DefaultModel;
         }
 
         if (trimmedModel.StartsWith("gpt-4o-mini-realtime-preview", StringComparison.OrdinalIgnoreCase))
@@ -28,7 +32,7 @@ internal static class OpenAiRealtimeModels
 
         if (trimmedModel.StartsWith("gpt-4o-realtime-preview", StringComparison.OrdinalIgnoreCase))
         {
-            return DefaultLegacyReplacement;
+            return DefaultModel;
         }
 
         return trimmedModel;
