@@ -426,14 +426,20 @@ public partial class MainWindow : Window
 
                     _streamer.OnInputTranscriptReceived += (chunk) =>
                     {
+                        var transcriptDelta = GetTranscriptDelta(chunk);
+                        if (string.IsNullOrWhiteSpace(transcriptDelta))
+                        {
+                            return;
+                        }
+
                         lock (_sessionTextLock)
                         {
-                            _sessionTranscript.Append(chunk);
+                            _sessionTranscript.Append(transcriptDelta);
                         }
 
                         if (_showTranscript)
                         {
-                            Dispatcher.Invoke(() => AppendGeminiResponseText(chunk));
+                            Dispatcher.Invoke(() => AppendGeminiResponseText(transcriptDelta));
                         }
                     };
 

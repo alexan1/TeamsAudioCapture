@@ -347,13 +347,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 
     private void HandleTranscriptionDelta(JsonElement root)
     {
-        if (!root.TryGetProperty("delta", out var delta))
-        {
-            return;
-        }
-
-        var text = delta.GetString();
-        if (string.IsNullOrWhiteSpace(text))
+        if (!TryGetTextProperty(root, "delta", out var text))
         {
             return;
         }
@@ -368,19 +362,16 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 
     private void HandleTranscriptionCompleted(JsonElement root)
     {
-        if (root.TryGetProperty("transcript", out var transcriptElement))
+        if (TryGetTextProperty(root, "transcript", out var transcript))
         {
-            var transcript = transcriptElement.GetString();
-            if (!string.IsNullOrWhiteSpace(transcript))
+            lock (_inputTranscriptBuffer)
             {
-                lock (_inputTranscriptBuffer)
-                {
-                    _inputTranscriptBuffer.Clear();
-                }
-
-                OnTurnComplete?.Invoke(transcript);
-                return;
+                _inputTranscriptBuffer.Clear();
             }
+
+            OnInputTranscriptReceived?.Invoke(transcript);
+            OnTurnComplete?.Invoke(transcript);
+            return;
         }
 
         string fallback;
@@ -394,6 +385,55 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         {
             OnTurnComplete?.Invoke(fallback);
         }
+    }
+
+    private static bool TryGetTextProperty(JsonElement root, string propertyName, out string text)
+    {
+        text = string.Empty;
+
+        if (!root.TryGetProperty(propertyName, out var propertyValue))
+        {
+            return false;
+        }
+
+        return TryGetTextValue(propertyValue, out text);
+    }
+
+    private static bool TryGetTextValue(JsonElement element, out string text)
+    {
+        text = string.Empty;
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                text = element.GetString() ?? string.Empty;
+                return !string.IsNullOrWhiteSpace(text);
+
+            case JsonValueKind.Object:
+                foreach (var propertyName in new[] { "text", "transcript", "content" })
+                {
+                    if (element.TryGetProperty(propertyName, out var nestedValue) &&
+                        TryGetTextValue(nestedValue, out text))
+                    {
+                        return true;
+                    }
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (TryGetTextValue(item, out text))
+                    {
+                        return true;
+                    }
+                }
+
+                break;
+        }
+
+        return false;
     }
 
     private static bool TryParseOutputDelta(string json, out string delta)
