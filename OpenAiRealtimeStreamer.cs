@@ -16,15 +16,22 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 {
     private const string RealtimeEndpoint = "wss://api.openai.com/v1/realtime";
     private const string DefaultTranscriptionModel = "gpt-4o-mini-transcribe";
+    private static readonly TimeSpan CommitInterval = TimeSpan.FromMilliseconds(750);
+    private static readonly string LogFilePath = Path.Combine(Path.GetTempPath(), "OpenAiDebug.log");
+    private static readonly object LogLock = new();
+    private static bool _logInitialized;
 
     private readonly string _apiKey;
     private readonly string _model;
     private readonly HttpClient _httpClient;
     private readonly StringBuilder _inputTranscriptBuffer = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
     private ClientWebSocket? _webSocket;
     private CancellationTokenSource? _cts;
     private Task? _receiveTask;
     private bool _isConnected;
+    private bool _hasPendingAudio;
+    private DateTime _lastCommitUtc = DateTime.MinValue;
     private TaskCompletionSource<bool>? _setupCompletionSource;
 
     public OpenAiRealtimeStreamer(string apiKey, string model)
@@ -45,6 +52,8 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         _apiKey = apiKey;
         _model = OpenAiRealtimeModels.Normalize(model);
         _httpClient = new HttpClient();
+        Log($"=== OpenAI Debug Log Started at {DateTime.Now:G} ===");
+        Log($"Log file location: {LogFilePath}");
     }
 
     /// <summary>Gets the last server error, if any.</summary>
@@ -102,10 +111,13 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
             audio = Convert.ToBase64String(pcm16Data)
         };
 
-        var json = JsonSerializer.Serialize(payload);
-        var bytes = Encoding.UTF8.GetBytes(json);
+        await SendJsonAsync(JsonSerializer.Serialize(payload), _cts.Token).ConfigureAwait(false);
 
-        await _webSocket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, _cts.Token).ConfigureAwait(false);
+        _hasPendingAudio = true;
+        if (DateTime.UtcNow - _lastCommitUtc >= CommitInterval)
+        {
+            await CommitInputAudioBufferAsync(_cts.Token).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Streams a text answer for the specified question.</summary>
@@ -187,6 +199,19 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         {
             _cts?.Cancel();
 
+            if (_webSocket != null && _webSocket.State == WebSocketState.Open)
+            {
+                using var flushCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                try
+                {
+                    await CommitInputAudioBufferAsync(flushCts.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or WebSocketException)
+                {
+                    Log($"⚠️ OpenAI final audio commit failed: {ex.Message}");
+                }
+            }
+
             if (_receiveTask != null)
             {
                 await Task.WhenAny(_receiveTask, Task.Delay(2000)).ConfigureAwait(false);
@@ -222,9 +247,11 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         _setupCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var uri = new Uri($"{RealtimeEndpoint}?model={_model}");
+        Log($"🌐 Connecting to OpenAI Realtime API with model '{_model}'...");
         await _webSocket.ConnectAsync(uri, ct).ConfigureAwait(false);
 
         _isConnected = true;
+        Log("✅ Connected to OpenAI Realtime API");
         _receiveTask = Task.Run(() => ReceiveMessagesAsync(ct), ct);
 
         await SendSessionUpdateAsync(ct).ConfigureAwait(false);
@@ -245,9 +272,8 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         };
 
         var json = JsonSerializer.Serialize(payload);
-        var bytes = Encoding.UTF8.GetBytes(json);
-
-        await _webSocket!.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+        Log($"📤 Sending OpenAI session update: {json}");
+        await SendJsonAsync(json, ct).ConfigureAwait(false);
     }
 
     private async Task ReceiveMessagesAsync(CancellationToken ct)
@@ -274,6 +300,7 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 
                 ms.Seek(0, SeekOrigin.Begin);
                 var json = Encoding.UTF8.GetString(ms.ToArray());
+                Log($"📨 OpenAI raw message: {json}");
                 ProcessMessage(json);
             }
         }
@@ -384,6 +411,44 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
         if (!string.IsNullOrWhiteSpace(fallback))
         {
             OnTurnComplete?.Invoke(fallback);
+        }
+    }
+
+    private async Task CommitInputAudioBufferAsync(CancellationToken cancellationToken)
+    {
+        if (!_hasPendingAudio || _webSocket == null || _webSocket.State != WebSocketState.Open)
+        {
+            return;
+        }
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            type = "input_audio_buffer.commit"
+        });
+
+        await SendJsonAsync(payload, cancellationToken).ConfigureAwait(false);
+        _hasPendingAudio = false;
+        _lastCommitUtc = DateTime.UtcNow;
+        Log("📤 Committed OpenAI input audio buffer");
+    }
+
+    private async Task SendJsonAsync(string json, CancellationToken cancellationToken)
+    {
+        if (_webSocket == null)
+        {
+            throw new InvalidOperationException("OpenAI WebSocket is not connected.");
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(json);
+        await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _webSocket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendLock.Release();
         }
     }
 
@@ -507,6 +572,17 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
 
     private static void Log(string message)
     {
+        lock (LogLock)
+        {
+            if (!_logInitialized)
+            {
+                File.WriteAllText(LogFilePath, string.Empty);
+                _logInitialized = true;
+            }
+
+            File.AppendAllText(LogFilePath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}{Environment.NewLine}");
+        }
+
         Console.WriteLine(message);
     }
 }
