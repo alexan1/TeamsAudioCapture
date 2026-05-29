@@ -421,7 +421,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
                 _inputTranscriptBuffer.Clear();
             }
 
-            OnInputTranscriptReceived?.Invoke(transcript);
             OnTurnComplete?.Invoke(transcript);
             return;
         }
@@ -515,7 +514,6 @@ public sealed class OpenAiRealtimeStreamer : ILiveAudioStreamer, IDisposable
                 _inputTranscriptBuffer.Clear();
             }
 
-            OnInputTranscriptReceived?.Invoke(transcript);
             OnTurnComplete?.Invoke(transcript);
             return;
         }

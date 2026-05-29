@@ -44,6 +44,53 @@ public partial class MainWindow : Window
         _recordingTimer.Tick += RecordingTimer_Tick;
     }
 
+    private void AppendCompletedTranscript(string transcript)
+    {
+        var normalized = transcript.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        lock (_sessionTextLock)
+        {
+            if (_sessionTranscript.Length > 0)
+            {
+                _sessionTranscript.AppendLine();
+            }
+
+            _sessionTranscript.Append(normalized);
+        }
+
+        lock (_transcriptLock)
+        {
+            if (string.IsNullOrWhiteSpace(_lastTranscriptChunk))
+            {
+                _lastTranscriptChunk = normalized;
+            }
+            else
+            {
+                _lastTranscriptChunk += Environment.NewLine + normalized;
+            }
+        }
+
+        if (_showTranscript)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (GeminiResponseText.Text == Properties.Resources.RecordingStartedMessage ||
+                    GeminiResponseText.Text == Properties.Resources.TranscriptEnabledMessage)
+                {
+                    SetGeminiResponseText(normalized);
+                }
+                else
+                {
+                    AppendGeminiResponseText(Environment.NewLine + normalized);
+                }
+            });
+        }
+    }
+
     private void LoadConfiguration()
     {
         _configuration = new ConfigurationBuilder()
@@ -426,6 +473,11 @@ public partial class MainWindow : Window
 
                     _streamer.OnInputTranscriptReceived += (chunk) =>
                     {
+                        if (string.Equals(_liveProvider, ProviderOpenAi, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return;
+                        }
+
                         var transcriptDelta = GetTranscriptDelta(chunk);
                         if (string.IsNullOrWhiteSpace(transcriptDelta))
                         {
@@ -445,6 +497,11 @@ public partial class MainWindow : Window
 
                     _streamer.OnTurnComplete += (fullSentence) =>
                     {
+                        if (string.Equals(_liveProvider, ProviderOpenAi, StringComparison.OrdinalIgnoreCase))
+                        {
+                            AppendCompletedTranscript(fullSentence);
+                        }
+
                         _ = TryAnswerQuestionAsync(fullSentence);
                     };
 
