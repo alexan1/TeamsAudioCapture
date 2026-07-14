@@ -23,7 +23,6 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
     private WaveFormat? _currentWaveFormat;
     private TaskCompletionSource<bool>? _setupCompletionSource;
     private DateTime _lastTranscriptionTime;
-    private bool _liveConnectFailed;
     private static readonly string LogFilePath = Path.Combine(Path.GetTempPath(), "GeminiDebug.log");
 
     public string? LastServerError { get; private set; }
@@ -487,7 +486,6 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
                 LastServerError = errorMessage;
                 Log($"❌ Gemini error: {errorMessage}");
                 _setupCompletionSource?.TrySetException(new InvalidOperationException($"Gemini Live API error: {errorMessage}"));
-                _liveConnectFailed = true;
             }
 
             // Log unknown message types for debugging
@@ -653,9 +651,14 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
             using var stream = await response.Content.ReadAsStreamAsync(tokenToUse);
             using var reader = new StreamReader(stream);
 
-            while (!reader.EndOfStream && !tokenToUse.IsCancellationRequested)
+            while (!tokenToUse.IsCancellationRequested)
             {
                 var line = await reader.ReadLineAsync(tokenToUse);
+                if (line == null)
+                {
+                    break;
+                }
+
                 if (string.IsNullOrEmpty(line) || !line.StartsWith("data: "))
                     continue;
 
@@ -834,7 +837,6 @@ public class GeminiAudioStreamer : IDisposable, ILiveAudioStreamer
         _httpClient?.Dispose();
     }
 }
-
 
 
 
