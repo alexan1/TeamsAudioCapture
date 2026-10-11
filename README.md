@@ -68,6 +68,7 @@ The settings are stored locally in `appsettings.Local.json` and are git-ignored 
 - Enable in Settings → "Capture microphone (your voice)"
 - Captures your voice from the default microphone
 - Mixed with system audio in real-time
+- Included in live transcription stream when processing is enabled
 - Ideal for recording complete Teams conversations
 
 ### Starting a Recording

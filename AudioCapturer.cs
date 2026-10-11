@@ -159,11 +159,6 @@ public class AudioCapturer
                         {
                             _systemBuffer.AddSamples(converted, 0, converted.Length);
                         }
-
-                        if (_geminiStreamer != null)
-                        {
-                            await _geminiStreamer.StreamAudioAsync(e.Buffer, 0, bytesRecorded, waveFormat);
-                        }
                     }
                     else
                     {
@@ -318,7 +313,7 @@ public class AudioCapturer
 
     private void MixAudio(object? state)
     {
-        if (_systemBuffer == null || _micBuffer == null || _writer == null || _targetFormat == null)
+        if (_systemBuffer == null || _micBuffer == null || _targetFormat == null)
             return;
 
         lock (_mixerLock)
@@ -326,7 +321,7 @@ public class AudioCapturer
             try
             {
                 // Calculate how much data we can read
-                var available = Math.Min(_systemBuffer.BufferedBytes, _micBuffer.BufferedBytes);
+                var available = Math.Max(_systemBuffer.BufferedBytes, _micBuffer.BufferedBytes);
                 if (available < _targetFormat.AverageBytesPerSecond / 50) // At least 20ms
                     return;
 
@@ -359,9 +354,22 @@ public class AudioCapturer
                     mixedData[i + 1] = mixedBytes[1];
                 }
 
-                _writer.Write(mixedData, 0, chunkSize);
+                _writer?.Write(mixedData, 0, chunkSize);
                 _totalBytesRecorded += chunkSize;
                 OnDataRecorded?.Invoke(_totalBytesRecorded);
+
+                if (_geminiStreamer != null)
+                {
+                    _ = _geminiStreamer.StreamAudioAsync(mixedData, 0, mixedData.Length, _targetFormat)
+                        .ContinueWith(task =>
+                        {
+                            if (task.IsFaulted)
+                            {
+                                var error = task.Exception?.GetBaseException().Message ?? "Unknown live streaming error.";
+                                OnError?.Invoke($"Live stream error: {error}");
+                            }
+                        }, TaskScheduler.Default);
+                }
             }
             catch (Exception ex)
             {
